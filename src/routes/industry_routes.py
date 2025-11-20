@@ -29,12 +29,56 @@ async def _stream_events(company_url: str, company_name: Optional[str] = None):
         yield f"data: {event_json}\n\n"
 
 
+@router.post("/analyze-smart")
+async def analyze_company_smart(request: CompanyAnalysisRequest):
+    """
+    Smart endpoint: Returns cached data instantly or streams if cache miss.
+    
+    This endpoint checks cache first:
+    - Cache HIT: Returns JSON immediately (~10-50ms)
+    - Cache MISS: Streams SSE with real-time progress
+    
+    Example:
+        POST /industry/analyze-smart
+        {
+            "company_url": "https://hellofresh.com",
+            "company_name": "HelloFresh"
+        }
+    """
+    from src.controllers.industry_controller import _get_cached_analysis
+    
+    # Check cache first
+    cached = _get_cached_analysis(str(request.company_url))
+    
+    if cached:
+        # INSTANT return with cached data
+        return {
+            "cached": True,
+            "data": cached
+        }
+    
+    # Cache miss - use streaming
+    return StreamingResponse(
+        _stream_events(
+            company_url=str(request.company_url),
+            company_name=request.company_name
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @router.post("/analyze")
 async def analyze_company(request: CompanyAnalysisRequest):
     """
     Analyze a company and detect its industry with streaming updates.
     
-    This endpoint streams Server-Sent Events (SSE) with real-time progress updates.
+    This endpoint always streams Server-Sent Events (SSE) with real-time progress.
+    Use /analyze-smart for automatic cache detection.
     
     Steps:
     1. Initialize analysis

@@ -35,10 +35,62 @@ async def _stream_events(
         await asyncio.sleep(0)
 
 
+@router.post("/generate-smart")
+async def generate_queries_smart(request: QueryGenerationRequest):
+    """
+    Smart endpoint: Returns cached queries instantly or streams if cache miss.
+    
+    This endpoint checks cache first:
+    - Cache HIT: Returns JSON immediately (~10-50ms)
+    - Cache MISS: Streams SSE with real-time progress
+    
+    Example:
+        POST /queries/generate-smart
+        {
+            "company_url": "https://hellofresh.com",
+            "company_name": "HelloFresh",
+            "num_queries": 50
+        }
+    """
+    from agents.query_generator import _get_cached_queries
+    
+    num_queries = request.num_queries or 50
+    
+    # Check cache first
+    cached = _get_cached_queries(str(request.company_url), num_queries)
+    
+    if cached:
+        # INSTANT return with cached data
+        return {
+            "cached": True,
+            "data": {
+                "total_queries": len(cached["queries"]),
+                "query_categories": cached["query_categories"]
+            }
+        }
+    
+    # Cache miss - use streaming
+    return StreamingResponse(
+        _stream_events(
+            company_url=str(request.company_url),
+            company_name=request.company_name,
+            num_queries=num_queries
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+
 @router.post("/generate")
 async def generate_queries(request: QueryGenerationRequest):
     """
     Generate industry-specific queries with streaming updates.
+    
+    This endpoint always streams. Use /generate-smart for automatic cache detection.
     
     This endpoint:
     1. Detects company industry (if not cached)

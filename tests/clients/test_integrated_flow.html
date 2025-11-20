@@ -433,7 +433,10 @@
     <div class="container">
       <div class="header">
         <h1>🔄 Integrated Flow Test</h1>
-        <p>Industry Detector → Query Generator (Real-time Streaming)</p>
+        <p>Industry Detector → Query Generator (Smart Caching)</p>
+        <p style="font-size: 0.9em; opacity: 0.8; margin-top: 10px">
+          ⚡ Cache hits return instantly • 🔄 Cache misses stream in real-time
+        </p>
       </div>
 
       <div class="main-content">
@@ -568,16 +571,22 @@
         });
 
         try {
-          // Step 1: Industry Detector (Streaming)
+          // Step 1: Industry Detector (Smart - checks cache first)
           document.getElementById('step1').classList.add('active');
           document.getElementById('loadingText').textContent =
-            'Step 1: Detecting industry and analyzing company...';
+            'Step 1: Checking cache...';
 
+          const startTime1 = Date.now();
           const detectorData = await streamIndustryDetection(
             companyUrl,
             companyName
           );
-          currentState = {...detectorData, num_queries: numQueries};
+          const time1 = Date.now() - startTime1;
+          currentState = {
+            ...detectorData,
+            num_queries: numQueries,
+            detectorTime: time1,
+          };
 
           document.getElementById('step1').classList.remove('active');
           document.getElementById('step1').classList.add('completed');
@@ -585,17 +594,19 @@
           // Small delay for visual effect
           await new Promise((resolve) => setTimeout(resolve, 500));
 
-          // Step 2: Query Generator (Streaming)
+          // Step 2: Query Generator (Smart - checks cache first)
           document.getElementById('step2').classList.add('active');
           document.getElementById('loadingText').textContent =
-            'Step 2: Generating industry-specific queries...';
+            'Step 2: Checking cache...';
 
+          const startTime2 = Date.now();
           const queryData = await streamQueryGeneration(
             companyUrl,
             companyName,
             numQueries
           );
-          currentState = {...currentState, ...queryData};
+          const time2 = Date.now() - startTime2;
+          currentState = {...currentState, ...queryData, queryTime: time2};
 
           document.getElementById('step2').classList.remove('active');
           document.getElementById('step2').classList.add('completed');
@@ -631,7 +642,7 @@
 
       function streamIndustryDetection(companyUrl, companyName) {
         return new Promise((resolve, reject) => {
-          const url = `http://localhost:8000/industry/analyze`;
+          const url = `http://localhost:8000/industry/analyze-smart`;
 
           fetch(url, {
             method: 'POST',
@@ -643,11 +654,25 @@
               company_name: companyName || null,
             }),
           })
-            .then((response) => {
+            .then(async (response) => {
               if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
               }
 
+              // Check if response is JSON (cache hit) or SSE (cache miss)
+              const contentType = response.headers.get('content-type');
+
+              if (contentType && contentType.includes('application/json')) {
+                // CACHE HIT - Instant JSON response
+                const result = await response.json();
+                console.log('⚡ CACHE HIT - Instant response:', result);
+                document.getElementById('loadingText').textContent =
+                  '⚡⚡⚡ Using cached analysis (instant!)';
+                resolve(result.data);
+                return;
+              }
+
+              // CACHE MISS - Stream the response
               const reader = response.body.getReader();
               const decoder = new TextDecoder();
               let buffer = '';
@@ -751,7 +776,7 @@
 
       function streamQueryGeneration(companyUrl, companyName, numQueries) {
         return new Promise((resolve, reject) => {
-          const url = `http://localhost:8000/queries/generate`;
+          const url = `http://localhost:8000/queries/generate-smart`;
 
           fetch(url, {
             method: 'POST',
@@ -764,11 +789,25 @@
               num_queries: numQueries,
             }),
           })
-            .then((response) => {
+            .then(async (response) => {
               if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
               }
 
+              // Check if response is JSON (cache hit) or SSE (cache miss)
+              const contentType = response.headers.get('content-type');
+
+              if (contentType && contentType.includes('application/json')) {
+                // CACHE HIT - Instant JSON response
+                const result = await response.json();
+                console.log('⚡ CACHE HIT - Instant response:', result);
+                document.getElementById('loadingText').textContent =
+                  '⚡⚡⚡ Using cached queries (instant!)';
+                resolve(result.data);
+                return;
+              }
+
+              // CACHE MISS - Stream the response
               const reader = response.body.getReader();
               const decoder = new TextDecoder();
               let buffer = '';
@@ -1015,11 +1054,44 @@
                       .join('')}
                 </div>
 
+                <!-- Performance Stats -->
+                <div class="result-box" style="border-left-color: #ff9800;">
+                    <h3>⚡ Performance</h3>
+                    <div class="result-item">
+                        <strong>Industry Detection:</strong> ${
+                          state.detectorTime || 0
+                        }ms
+                        ${
+                          state.detectorTime < 100
+                            ? '<span class="badge badge-success">⚡ Cached</span>'
+                            : '<span class="badge badge-info">🔄 Fresh</span>'
+                        }
+                    </div>
+                    <div class="result-item">
+                        <strong>Query Generation:</strong> ${
+                          state.queryTime || 0
+                        }ms
+                        ${
+                          state.queryTime < 100
+                            ? '<span class="badge badge-success">⚡ Cached</span>'
+                            : '<span class="badge badge-info">🔄 Fresh</span>'
+                        }
+                    </div>
+                    <div class="result-item">
+                        <strong>Total Time:</strong> ${
+                          (state.detectorTime || 0) + (state.queryTime || 0)
+                        }ms
+                    </div>
+                </div>
+
                 <!-- Integration Benefits -->
                 <div class="result-box" style="border-left-color: #4caf50;">
                     <h3>✨ Integration Benefits</h3>
                     <div class="result-item">
-                        <strong>✓ No Redundant Calls:</strong> Query Generator used cached data from Industry Detector
+                        <strong>✓ Smart Caching:</strong> Instant return on cache hits (~10-50ms)
+                    </div>
+                    <div class="result-item">
+                        <strong>✓ No Redundant Calls:</strong> Query Generator reuses Industry Detector data
                     </div>
                     <div class="result-item">
                         <strong>✓ Rich Context:</strong> Queries personalized with company name and competitors
@@ -1030,7 +1102,7 @@
                         } industry
                     </div>
                     <div class="result-item">
-                        <strong>✓ Cached Results:</strong> Both steps cached for 24 hours (next run will be faster)
+                        <strong>✓ 24hr Cache:</strong> Both steps cached for fast subsequent requests
                     </div>
                 </div>
             `;
