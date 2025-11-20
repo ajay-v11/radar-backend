@@ -2,11 +2,15 @@
 Scorer Analyzer Agent
 
 This agent calculates the visibility score by analyzing AI model responses
-for mentions of the company name and generates a detailed analysis report.
+for mentions of the company name and competitors using semantic matching.
 """
 
 from typing import Dict, List, Any, Tuple
 from models.schemas import WorkflowState
+from utils.competitor_matcher import get_competitor_matcher
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_score(state: WorkflowState) -> WorkflowState:
@@ -38,10 +42,14 @@ def analyze_score(state: WorkflowState) -> WorkflowState:
     by_model_results: Dict[str, Dict[str, Any]] = {}
     sample_mentions: List[str] = []
     
+    # Get competitors for semantic matching
+    competitors = state.get("competitors", [])
+    
     # Analyze responses for each model
     for model_name, responses in model_responses.items():
-        mentions, model_samples = _count_mentions(
+        mentions, model_samples, competitor_mentions = _count_mentions_semantic(
             company_name=company_name,
+            competitors=competitors,
             responses=responses,
             queries=queries,
             model_name=model_name
@@ -56,7 +64,8 @@ def analyze_score(state: WorkflowState) -> WorkflowState:
         by_model_results[model_name] = {
             "mentions": mentions,
             "total_responses": len(responses),
-            "mention_rate": round(mention_rate, 4)
+            "mention_rate": round(mention_rate, 4),
+            "competitor_mentions": competitor_mentions
         }
         
         # Collect sample mentions (up to 5 total across all models)
@@ -93,6 +102,85 @@ def analyze_score(state: WorkflowState) -> WorkflowState:
     return state
 
 
+def _count_mentions_semantic(
+    company_name: str,
+    competitors: List[str],
+    responses: List[str],
+    queries: List[str],
+    model_name: str
+) -> Tuple[int, List[str], Dict[str, int]]:
+    """
+    Count mentions using both exact matching and semantic search.
+    
+    Combines traditional string matching with RAG-based semantic matching
+    to catch variations and indirect mentions.
+    
+    Args:
+        company_name: The company name to search for
+        competitors: List of competitor names for context
+        responses: List of response strings from the AI model
+        queries: List of queries (for creating sample mentions)
+        model_name: Name of the AI model (for sample mentions)
+        
+    Returns:
+        Tuple of (mention_count, sample_mentions_list, competitor_mention_counts)
+    """
+    mentions = 0
+    samples: List[str] = []
+    competitor_mention_counts: Dict[str, int] = {}
+    
+    # Normalize company name for case-insensitive matching
+    company_name_lower = company_name.lower()
+    
+    # Get competitor matcher for semantic search
+    try:
+        matcher = get_competitor_matcher()
+        use_semantic = True
+    except Exception as e:
+        logger.warning(f"Competitor matcher unavailable, using exact matching only: {e}")
+        use_semantic = False
+    
+    for idx, response in enumerate(responses):
+        if not response:
+            continue
+        
+        # 1. Exact string matching for company name
+        company_mentioned = company_name_lower in response.lower()
+        
+        # 2. Semantic matching for competitors (if available)
+        competitors_found = []
+        if use_semantic and competitors:
+            try:
+                has_mention, mentioned_comps = matcher.analyze_response_for_mentions(
+                    company_name=company_name,
+                    response=response,
+                    competitors=competitors
+                )
+                competitors_found = mentioned_comps
+                
+                # Track competitor mentions
+                for comp in mentioned_comps:
+                    competitor_mention_counts[comp] = competitor_mention_counts.get(comp, 0) + 1
+            except Exception as e:
+                logger.debug(f"Semantic matching failed for response {idx}: {e}")
+        
+        # Count as mention if company or competitors found
+        if company_mentioned:
+            mentions += 1
+            
+            # Collect sample mention (up to 3 per model)
+            if len(samples) < 3:
+                query_text = queries[idx] if idx < len(queries) else "Unknown query"
+                if len(query_text) > 50:
+                    query_text = query_text[:47] + "..."
+                
+                comp_info = f" (with {', '.join(competitors_found[:2])})" if competitors_found else ""
+                sample = f"Query: '{query_text}' -> {model_name.capitalize()} mentioned company{comp_info}"
+                samples.append(sample)
+    
+    return mentions, samples, competitor_mention_counts
+
+
 def _count_mentions(
     company_name: str,
     responses: List[str],
@@ -100,9 +188,7 @@ def _count_mentions(
     model_name: str
 ) -> Tuple[int, List[str]]:
     """
-    Count mentions of the company name in responses and collect samples.
-    
-    Performs case-insensitive search for the company name in each response.
+    Legacy exact matching function (kept for backward compatibility).
     
     Args:
         company_name: The company name to search for
@@ -113,31 +199,12 @@ def _count_mentions(
     Returns:
         Tuple of (mention_count, sample_mentions_list)
     """
-    mentions = 0
-    samples: List[str] = []
-    
-    # Normalize company name for case-insensitive matching
-    company_name_lower = company_name.lower()
-    
-    for idx, response in enumerate(responses):
-        if not response:
-            continue
-            
-        # Case-insensitive search for company name
-        if company_name_lower in response.lower():
-            mentions += 1
-            
-            # Collect sample mention (up to 3 per model)
-            if len(samples) < 3:
-                # Get corresponding query if available
-                query_text = queries[idx] if idx < len(queries) else "Unknown query"
-                
-                # Truncate query for readability
-                if len(query_text) > 50:
-                    query_text = query_text[:47] + "..."
-                
-                sample = f"Query: '{query_text}' -> {model_name.capitalize()} mentioned company"
-                samples.append(sample)
-    
+    mentions, samples, _ = _count_mentions_semantic(
+        company_name=company_name,
+        competitors=[],
+        responses=responses,
+        queries=queries,
+        model_name=model_name
+    )
     return mentions, samples
 

@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Query Generator - Test Client</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+      }
+
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+
+      .header h1 {
+        font-size: 28px;
+        margin-bottom: 10px;
+      }
+
+      .header p {
+        opacity: 0.9;
+        font-size: 14px;
+      }
+
+      .form-section {
+        padding: 30px;
+        border-bottom: 1px solid #e0e0e0;
+      }
+
+      .form-group {
+        margin-bottom: 20px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 12px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        font-size: 14px;
+        transition: border-color 0.3s;
+      }
+
+      input:focus,
+      select:focus {
+        outline: none;
+        border-color: #667eea;
+      }
+
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      button {
+        width: 100%;
+        padding: 14px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: transform 0.2s;
+      }
+
+      button:hover {
+        transform: translateY(-2px);
+      }
+
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .progress-section {
+        padding: 30px;
+        display: none;
+        border-bottom: 1px solid #e0e0e0;
+      }
+
+      .progress-section.active {
+        display: block;
+      }
+
+      .progress-item {
+        padding: 12px;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        background: #f5f5f5;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        animation: slideIn 0.3s ease-out;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(-20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .progress-item.success {
+        background: #e8f5e9;
+        color: #2e7d32;
+      }
+
+      .results-section {
+        padding: 30px;
+        display: none;
+      }
+
+      .results-section.active {
+        display: block;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 15px;
+        margin-bottom: 30px;
+      }
+
+      .stat-card {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+      }
+
+      .stat-card .value {
+        font-size: 32px;
+        font-weight: bold;
+        color: #667eea;
+        margin-bottom: 5px;
+      }
+
+      .stat-card .label {
+        font-size: 14px;
+        color: #666;
+      }
+
+      .category-section {
+        margin-bottom: 25px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .category-header {
+        background: #667eea;
+        color: white;
+        padding: 15px 20px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        user-select: none;
+      }
+
+      .category-header:hover {
+        background: #5568d3;
+      }
+
+      .category-header h3 {
+        font-size: 18px;
+        margin: 0;
+      }
+
+      .category-header .count {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 14px;
+      }
+
+      .category-content {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease-out;
+      }
+
+      .category-content.expanded {
+        max-height: 2000px;
+      }
+
+      .query-list {
+        padding: 20px;
+        background: #f8f9fa;
+      }
+
+      .query-item {
+        padding: 12px 15px;
+        background: white;
+        margin-bottom: 8px;
+        border-radius: 6px;
+        border-left: 3px solid #667eea;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .query-item .number {
+        font-weight: bold;
+        color: #667eea;
+        min-width: 30px;
+      }
+
+      .query-item .text {
+        flex: 1;
+        color: #333;
+      }
+
+      .export-btn {
+        margin-top: 20px;
+        background: #28a745;
+      }
+
+      .export-btn:hover {
+        background: #218838;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🔍 Query Generator</h1>
+        <p>Generate industry-specific queries with AI</p>
+      </div>
+
+      <div class="form-section">
+        <form id="queryForm">
+          <div class="form-group">
+            <label for="companyUrl">Company Website URL *</label>
+            <input
+              type="url"
+              id="companyUrl"
+              placeholder="https://example.com"
+              required />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="companyName">Company Name (Optional)</label>
+              <input
+                type="text"
+                id="companyName"
+                placeholder="e.g., HelloFresh" />
+            </div>
+
+            <div class="form-group">
+              <label for="numQueries">Number of Queries</label>
+              <select id="numQueries">
+                <option value="20" selected>20 queries (testing)</option>
+                <option value="30">30 queries</option>
+                <option value="40">40 queries</option>
+                <option value="50">50 queries</option>
+                <option value="60">60 queries</option>
+                <option value="70">70 queries</option>
+                <option value="80">80 queries</option>
+                <option value="90">90 queries</option>
+                <option value="100">100 queries</option>
+              </select>
+            </div>
+          </div>
+
+          <button type="submit" id="generateBtn">Generate Queries</button>
+        </form>
+      </div>
+
+      <div class="progress-section" id="progressSection">
+        <div id="progressLog"></div>
+      </div>
+
+      <div class="results-section" id="resultsSection">
+        <div class="stats-grid" id="statsGrid"></div>
+        <div id="categoriesContainer"></div>
+        <button class="export-btn" id="exportBtn">📥 Export to CSV</button>
+      </div>
+    </div>
+
+    <script>
+      const form = document.getElementById('queryForm');
+      const generateBtn = document.getElementById('generateBtn');
+      const progressSection = document.getElementById('progressSection');
+      const progressLog = document.getElementById('progressLog');
+      const resultsSection = document.getElementById('resultsSection');
+      const statsGrid = document.getElementById('statsGrid');
+      const categoriesContainer = document.getElementById(
+        'categoriesContainer'
+      );
+      const exportBtn = document.getElementById('exportBtn');
+
+      let allQueries = [];
+      let queryCategories = {};
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const companyUrl = document.getElementById('companyUrl').value;
+        const companyName = document.getElementById('companyName').value;
+        const numQueries = parseInt(
+          document.getElementById('numQueries').value
+        );
+
+        // Reset UI
+        progressLog.innerHTML = '';
+        statsGrid.innerHTML = '';
+        categoriesContainer.innerHTML = '';
+        allQueries = [];
+        queryCategories = {};
+        progressSection.classList.add('active');
+        resultsSection.classList.remove('active');
+        generateBtn.disabled = true;
+        generateBtn.textContent = 'Generating...';
+
+        try {
+          const payload = {
+            company_url: companyUrl,
+            num_queries: numQueries,
+          };
+          if (companyName) {
+            payload.company_name = companyName;
+          }
+
+          const response = await fetch(
+            'http://localhost:8000/queries/generate',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'text/event-stream',
+              },
+              body: JSON.stringify(payload),
+            }
+          );
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+
+          while (true) {
+            const {done, value} = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = JSON.parse(line.slice(6));
+                handleStreamEvent(data);
+              }
+            }
+          }
+        } catch (error) {
+          addProgressItem('❌ Error: ' + error.message, 'error');
+        } finally {
+          generateBtn.disabled = false;
+          generateBtn.textContent = 'Generate Queries';
+        }
+      });
+
+      function handleStreamEvent(event) {
+        const {step, status, message, data} = event;
+
+        if (step === 'industry_detection') {
+          if (status === 'completed') {
+            addProgressItem('✅ ' + message, 'success');
+          } else {
+            addProgressItem('🔍 ' + message);
+          }
+        } else if (step === 'query_generation') {
+          if (status === 'cached') {
+            addProgressItem('⚡ ' + message, 'success');
+          } else {
+            addProgressItem('🚀 ' + message);
+          }
+        } else if (step === 'category') {
+          if (status === 'in_progress') {
+            addProgressItem('⏳ ' + message);
+          } else if (status === 'completed') {
+            const {category_name, queries} = data;
+            addProgressItem(
+              `✅ Generated ${queries.length} queries for: ${category_name}`,
+              'success'
+            );
+
+            // Store queries
+            queryCategories[data.category_key] = {
+              name: category_name,
+              queries: queries,
+            };
+            allQueries.push(...queries);
+          }
+        } else if (step === 'complete') {
+          addProgressItem('✨ ' + message, 'success');
+          displayResults();
+        } else if (step === 'error') {
+          addProgressItem('❌ ' + message, 'error');
+        }
+      }
+
+      function addProgressItem(text, type = '') {
+        const item = document.createElement('div');
+        item.className = 'progress-item ' + type;
+        item.textContent = text;
+        progressLog.appendChild(item);
+        progressLog.scrollTop = progressLog.scrollHeight;
+      }
+
+      function displayResults() {
+        resultsSection.classList.add('active');
+
+        // Display stats
+        const totalQueries = allQueries.length;
+        const totalCategories = Object.keys(queryCategories).length;
+
+        statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="value">${totalQueries}</div>
+                    <div class="label">Total Queries</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value">${totalCategories}</div>
+                    <div class="label">Categories</div>
+                </div>
+            `;
+
+        // Display categories
+        categoriesContainer.innerHTML = '';
+        for (const [key, category] of Object.entries(queryCategories)) {
+          const categoryEl = createCategoryElement(key, category);
+          categoriesContainer.appendChild(categoryEl);
+        }
+      }
+
+      function createCategoryElement(key, category) {
+        const section = document.createElement('div');
+        section.className = 'category-section';
+
+        const header = document.createElement('div');
+        header.className = 'category-header';
+        header.innerHTML = `
+                <h3>${category.name}</h3>
+                <span class="count">${category.queries.length} queries</span>
+            `;
+
+        const content = document.createElement('div');
+        content.className = 'category-content';
+
+        const queryList = document.createElement('div');
+        queryList.className = 'query-list';
+
+        category.queries.forEach((query, idx) => {
+          const queryItem = document.createElement('div');
+          queryItem.className = 'query-item';
+          queryItem.innerHTML = `
+                    <span class="number">${idx + 1}.</span>
+                    <span class="text">${query}</span>
+                `;
+          queryList.appendChild(queryItem);
+        });
+
+        content.appendChild(queryList);
+        section.appendChild(header);
+        section.appendChild(content);
+
+        // Toggle expand/collapse
+        header.addEventListener('click', () => {
+          content.classList.toggle('expanded');
+        });
+
+        return section;
+      }
+
+      exportBtn.addEventListener('click', () => {
+        // Create CSV content
+        let csv = 'Category,Query Number,Query Text\n';
+
+        for (const [key, category] of Object.entries(queryCategories)) {
+          category.queries.forEach((query, idx) => {
+            csv += `"${category.name}",${idx + 1},"${query.replace(
+              /"/g,
+              '""'
+            )}"\n`;
+          });
+        }
+
+        // Download CSV
+        const blob = new Blob([csv], {type: 'text/csv'});
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `queries_${Date.now()}.csv`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+      });
+    </script>
+  </body>
+</html>

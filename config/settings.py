@@ -33,6 +33,19 @@ class Settings(BaseSettings):
     # Query Settings
     NUM_QUERIES: int = 20
     
+    # ChromaDB Settings
+    CHROMA_HOST: str = "localhost"
+    CHROMA_PORT: int = 8001
+    CHROMA_COLLECTION_COMPANIES: str = "companies"
+    CHROMA_COLLECTION_COMPETITORS: str = "competitors"
+    
+    # Redis Settings
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+    REDIS_CACHE_TTL: int = 3600  # 1 hour cache TTL
+    REDIS_MAX_CONNECTIONS: int = 10
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

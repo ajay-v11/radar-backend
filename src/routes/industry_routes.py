@@ -7,9 +7,11 @@ Endpoints for company analysis and industry detection.
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from src.controllers.industry_controller import analyze_company_stream
+from agents.industry_detector import detect_industry
+from models.schemas import WorkflowState
 
 
 router = APIRouter(prefix="/industry", tags=["Industry Detection"])

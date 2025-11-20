@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # ChromaDB - Vector database for RAG and semantic search
+  # Use for: company embeddings, industry detection, competitor similarity
+  radar-backend-chromadb:
+    image: chromadb/chroma:latest
+    container_name: radar-backend-chromadb
+    ports:
+      - '8001:8000' # Changed to 8001 to avoid conflict with your FastAPI on 8000
+    volumes:
+      - radar-backend-chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    networks:
+      - radar-backend-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/api/v1/heartbeat']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis - Cache and session store
+  # Use for: API response caching, rate limiting, job tracking
+  radar-backend-redis:
+    image: redis:7-alpine
+    container_name: radar-backend-redis
+    ports:
+      - '6379:6379'
+    volumes:
+      - radar-backend-redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - radar-backend-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  radar-backend-chroma-data:
+    name: radar-backend-chroma-data
+  radar-backend-redis-data:
+    name: radar-backend-redis-data
+
+networks:
+  radar-backend-network:
+    name: radar-backend-network
+    driver: bridge

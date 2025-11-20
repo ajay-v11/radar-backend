@@ -10,7 +10,16 @@ from typing import Dict, List, Optional
 from openai import OpenAI
 from models.schemas import WorkflowState
 from config.settings import settings
+from utils.competitor_matcher import get_competitor_matcher
+from utils.vector_store import get_vector_store
+from utils.cache import get_cached_model_response, cache_model_response
 import json
+import logging
+import hashlib
+from functools import wraps
+import time
+
+logger = logging.getLogger(__name__)
 
 
 def detect_industry(state: WorkflowState) -> WorkflowState:
@@ -69,7 +78,20 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
             state["company_description"] = analysis.get("company_description", company_description)
             state["company_summary"] = analysis.get("company_summary", "")
             state["industry"] = analysis.get("industry", "other")
-            state["competitors"] = analysis.get("competitors", [])
+            
+            # Extract competitor data (handle both old and new format)
+            competitors_data = analysis.get("competitors", [])
+            if competitors_data and isinstance(competitors_data[0], dict):
+                # New format with rich data
+                state["competitors"] = [c["name"] for c in competitors_data]
+                state["competitors_data"] = competitors_data
+            else:
+                # Old format (just names)
+                state["competitors"] = competitors_data
+                state["competitors_data"] = []
+            
+            # Store in vector database for future use
+            _store_company_data(state, scraped_content)
         else:
             # Fallback to basic keyword detection if AI analysis fails
             state["industry"] = _fallback_keyword_detection(
@@ -89,9 +111,43 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
     return state
 
 
+def _get_cache_key(url: str) -> str:
+    """Generate cache key for scraped content."""
+    return f"scrape:{hashlib.md5(url.encode()).hexdigest()}"
+
+
+def _get_cached_scrape(url: str) -> Optional[str]:
+    """Get cached scraped content."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_cache_key(url)
+        cached = redis_client.get(cache_key)
+        if cached:
+            logger.info(f"Cache HIT for scrape: {url}")
+            return cached
+        logger.debug(f"Cache MISS for scrape: {url}")
+        return None
+    except Exception as e:
+        logger.warning(f"Cache retrieval failed: {e}")
+        return None
+
+
+def _cache_scrape(url: str, content: str, ttl: int = 86400) -> None:
+    """Cache scraped content (24 hour TTL by default)."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_cache_key(url)
+        redis_client.setex(cache_key, ttl, content)
+        logger.debug(f"Cached scrape for: {url}")
+    except Exception as e:
+        logger.warning(f"Cache storage failed: {e}")
+
+
 def _scrape_website(url: str, errors: List[str]) -> str:
     """
-    Scrape website content using Firecrawl.
+    Scrape website content using Firecrawl with caching.
     
     Args:
         url: Website URL to scrape
@@ -100,6 +156,11 @@ def _scrape_website(url: str, errors: List[str]) -> str:
     Returns:
         Scraped content in markdown format, or empty string on failure
     """
+    # Check cache first
+    cached_content = _get_cached_scrape(url)
+    if cached_content:
+        return cached_content
+    
     if not settings.FIRECRAWL_API_KEY:
         errors.append("Firecrawl API key not configured")
         return ""
@@ -113,26 +174,60 @@ def _scrape_website(url: str, errors: List[str]) -> str:
         result = firecrawl.scrape(
             url=url,
             formats=["markdown"],
-            only_main_content=True,  # Focus on main content, skip navigation/footer
-            timeout=30000  # 30 second timeout
+            only_main_content=True,
+            timeout=30000
         )
         
-        if result and "markdown" in result:
+        # Handle both dict and object responses
+        markdown_content = None
+        if hasattr(result, 'markdown') and result.markdown:
+            markdown_content = result.markdown
+        elif isinstance(result, dict) and "markdown" in result:
             markdown_content = result["markdown"]
-            # Limit content to first 10000 characters to avoid token limits
-            return markdown_content[:10000] if markdown_content else ""
+        
+        if markdown_content:
+            # Limit to 5000 characters to reduce token usage
+            content = markdown_content[:5000]
+            
+            # Cache the result
+            _cache_scrape(url, content)
+            
+            logger.info(f"Successfully scraped {len(content)} characters from {url}")
+            return content
         else:
             errors.append(f"Firecrawl returned no content for {url}")
+            logger.error(f"Firecrawl returned no markdown content for {url}")
             return ""
             
     except ImportError:
         errors.append("Firecrawl package not installed. Install with: pip install firecrawl-py")
+        logger.error("Firecrawl package not installed")
         return ""
     except Exception as e:
         errors.append(f"Firecrawl scraping error for {url}: {str(e)}")
+        logger.error(f"Firecrawl scraping error for {url}: {str(e)}")
         return ""
 
 
+def _retry_on_failure(max_attempts: int = 2, delay: float = 1.0):
+    """Decorator to retry function on failure."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    if attempt == max_attempts - 1:
+                        raise
+                    logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}. Retrying...")
+                    time.sleep(delay)
+            return None
+        return wrapper
+    return decorator
+
+
+@_retry_on_failure(max_attempts=2, delay=1.0)
 def _analyze_with_openai(
     scraped_content: str,
     company_url: str,
@@ -177,7 +272,14 @@ Please analyze this content and provide a JSON response with the following struc
     "company_description": "A brief 1-2 sentence description of what the company does",
     "company_summary": "A comprehensive 3-4 sentence summary of the company's business, products/services, and value proposition",
     "industry": "One of: technology, retail, healthcare, finance, food_services, or other",
-    "competitors": ["List of 3-5 main competitor names in the same industry"]
+    "competitors": [
+        {{
+            "name": "Competitor name",
+            "description": "Brief 1-sentence description of what they do",
+            "products": "Main products/services (comma-separated)",
+            "positioning": "Key differentiator or market position (e.g., premium, budget, innovative)"
+        }}
+    ]
 }}
 
 Industry Classification Guidelines:
@@ -188,7 +290,13 @@ Industry Classification Guidelines:
 - food_services: Restaurants, meal delivery, catering, food tech, meal kits
 - other: Anything that doesn't clearly fit the above categories
 
-Be accurate and specific. If the company name is already provided and correct, use it. For competitors, list actual company names that compete in the same space."""
+For competitors, provide 3-5 main competitors with:
+- Accurate company names
+- Brief description of what they do
+- Their main products/services
+- Market positioning (premium, budget, innovative, etc.)
+
+Be specific and accurate."""
 
         response = client.chat.completions.create(
             model=settings.INDUSTRY_ANALYSIS_MODEL,
@@ -226,14 +334,97 @@ Be accurate and specific. If the company name is already provided and correct, u
         analysis.setdefault("company_summary", "")
         analysis.setdefault("competitors", [])
         
+        # Validate competitor data structure
+        competitors = analysis.get("competitors", [])
+        if competitors and isinstance(competitors[0], dict):
+            validated_competitors = []
+            for comp in competitors:
+                # Ensure each competitor has required fields
+                if comp.get("name"):
+                    validated_comp = {
+                        "name": comp.get("name", ""),
+                        "description": comp.get("description", ""),
+                        "products": comp.get("products", ""),
+                        "positioning": comp.get("positioning", "")
+                    }
+                    validated_competitors.append(validated_comp)
+            analysis["competitors"] = validated_competitors
+            logger.info(f"Validated {len(validated_competitors)} competitors")
+        
         return analysis
         
     except json.JSONDecodeError as e:
         errors.append(f"Failed to parse OpenAI response as JSON: {str(e)}")
+        logger.error(f"JSON parsing error: {str(e)}")
         return None
     except Exception as e:
         errors.append(f"OpenAI analysis error: {str(e)}")
+        logger.error(f"OpenAI analysis error: {str(e)}")
         return None
+
+
+def _store_company_data(state: WorkflowState, scraped_content: str) -> None:
+    """
+    Store company data and competitors in vector database.
+    
+    Args:
+        state: WorkflowState with company information
+        scraped_content: Scraped website content
+    """
+    try:
+        company_name = state.get("company_name", "")
+        if not company_name:
+            return
+        
+        # Store company profile
+        vector_store = get_vector_store()
+        vector_store.store_company(
+            company_name=company_name,
+            company_url=state.get("company_url", ""),
+            scraped_content=scraped_content,
+            industry=state.get("industry", "other"),
+            description=state.get("company_description", ""),
+            metadata={
+                "summary": state.get("company_summary", "")
+            }
+        )
+        
+        # Store competitors with rich embeddings
+        competitors = state.get("competitors", [])
+        competitors_data = state.get("competitors_data", [])
+        
+        if competitors:
+            competitor_matcher = get_competitor_matcher()
+            
+            # Build rich metadata from competitors_data
+            descriptions = {}
+            metadata_extra = {}
+            
+            if competitors_data:
+                for comp_data in competitors_data:
+                    comp_name = comp_data.get("name", "")
+                    if comp_name:
+                        descriptions[comp_name] = comp_data.get("description", "")
+                        metadata_extra[comp_name] = {
+                            "products": comp_data.get("products", ""),
+                            "positioning": comp_data.get("positioning", "")
+                        }
+            
+            competitor_matcher.store_competitors(
+                company_name=company_name,
+                competitors=competitors,
+                industry=state.get("industry", "other"),
+                descriptions=descriptions,
+                metadata_extra=metadata_extra
+            )
+    
+    except Exception as e:
+        # Don't fail the workflow if storage fails
+        error_msg = f"Failed to store company data in vector DB: {str(e)}"
+        errors = state.get("errors", [])
+        errors.append(error_msg)
+        state["errors"] = errors
+        logger.error(error_msg)
 
 
 def _fallback_keyword_detection(company_name: str, text_content: str) -> str:

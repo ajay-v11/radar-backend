@@ -35,20 +35,89 @@ async def analyze_company_stream(
         })
         await asyncio.sleep(0.1)
         
-        # Step 2: Scrape website
-        yield json.dumps({
-            "step": "scraping",
-            "status": "in_progress",
-            "message": f"Crawling website: {company_url}",
-            "data": None
-        })
+        # Step 1.5: Check for FULL analysis cache first (instant return)
+        import logging
+        import hashlib
+        logger = logging.getLogger(__name__)
         
-        scraped_content = await asyncio.to_thread(
-            _scrape_website,
-            company_url
-        )
+        cached_analysis = await asyncio.to_thread(_get_cached_analysis, company_url)
+        
+        if cached_analysis:
+            print(f"\n{'='*60}")
+            print(f"[FULL CACHE HIT] ⚡⚡⚡ Returning complete analysis instantly!")
+            print(f"[FULL CACHE HIT] Company: {cached_analysis.get('company_name')}")
+            print(f"[FULL CACHE HIT] Industry: {cached_analysis.get('industry')}")
+            print(f"{'='*60}\n")
+            
+            # Return all steps instantly with cached data
+            yield json.dumps({
+                "step": "scraping",
+                "status": "cached",
+                "message": "⚡ Using cached analysis (instant)",
+                "data": {"cached": True}
+            })
+            
+            yield json.dumps({
+                "step": "analyzing",
+                "status": "cached",
+                "message": "⚡ Using cached analysis (instant)",
+                "data": None
+            })
+            
+            yield json.dumps({
+                "step": "competitors",
+                "status": "cached",
+                "message": f"⚡ Cached: {len(cached_analysis.get('competitors', []))} competitors",
+                "data": {"competitor_count": len(cached_analysis.get('competitors', []))}
+            })
+            
+            yield json.dumps({
+                "step": "complete",
+                "status": "success",
+                "message": "Company analysis completed (from cache)",
+                "data": cached_analysis
+            })
+            return
+        
+        # Step 2: Scrape website (with cache check)
+        from agents.industry_detector import _get_cached_scrape
+        
+        # Check scrape cache
+        cached_content = await asyncio.to_thread(_get_cached_scrape, company_url)
+        
+        if cached_content:
+            print(f"\n{'='*60}")
+            print(f"[CACHE HIT] ⚡ Scrape cache hit for {company_url}")
+            print(f"{'='*60}\n")
+            logger.info(f"[CACHE HIT] Scrape cache hit for {company_url}")
+            yield json.dumps({
+                "step": "scraping",
+                "status": "cached",
+                "message": f"⚡ Using cached website content (instant retrieval)",
+                "data": {"content_length": len(cached_content), "cached": True}
+            })
+            scraped_content = cached_content
+            # Skip delay on cache hit
+            await asyncio.sleep(0)
+        else:
+            print(f"\n{'='*60}")
+            print(f"[CACHE MISS] 🔄 Scraping {company_url}")
+            print(f"{'='*60}\n")
+            logger.info(f"[CACHE MISS] Scraping {company_url}")
+            yield json.dumps({
+                "step": "scraping",
+                "status": "in_progress",
+                "message": f"Crawling website: {company_url}",
+                "data": None
+            })
+            
+            scraped_content = await asyncio.to_thread(
+                _scrape_website,
+                company_url
+            )
         
         if not scraped_content:
+            logger.error(f"[SCRAPE FAILED] No content retrieved for {company_url}")
             yield json.dumps({
                 "step": "scraping",
                 "status": "failed",
@@ -63,13 +132,20 @@ async def analyze_company_stream(
             })
             return
         
-        yield json.dumps({
-            "step": "scraping",
-            "status": "completed",
-            "message": f"Successfully scraped {len(scraped_content)} characters",
-            "data": {"content_length": len(scraped_content)}
-        })
-        await asyncio.sleep(0.1)
+        if not cached_content:
+            # Only send completion message if we actually scraped (not cached)
+            print(f"[SCRAPE SUCCESS] ✅ Retrieved {len(scraped_content)} characters\n")
+            logger.info(f"[SCRAPE SUCCESS] Retrieved {len(scraped_content)} characters")
+            yield json.dumps({
+                "step": "scraping",
+                "status": "completed",
+                "message": f"Successfully scraped {len(scraped_content)} characters",
+                "data": {"content_length": len(scraped_content), "cached": False}
+            })
+            await asyncio.sleep(0.1)
+        else:
+            # No delay on cache hit
+            await asyncio.sleep(0)
         
         # Step 3: Analyze with AI
         yield json.dumps({
@@ -126,18 +202,24 @@ async def analyze_company_stream(
         })
         await asyncio.sleep(0.1)
         
-        # Step 5: Final results
+        # Step 5: Cache the complete analysis and return results
+        final_data = {
+            "company_name": analysis.get("company_name"),
+            "company_description": analysis.get("company_description"),
+            "company_summary": analysis.get("company_summary"),
+            "industry": analysis.get("industry"),
+            "competitors": analysis.get("competitors", [])
+        }
+        
+        # Cache the complete analysis for instant future retrieval
+        await asyncio.to_thread(_cache_analysis, company_url, final_data)
+        print(f"[ANALYSIS CACHED] 💾 Stored complete analysis for {company_url}\n")
+        
         yield json.dumps({
             "step": "complete",
             "status": "success",
             "message": "Company analysis completed successfully",
-            "data": {
-                "company_name": analysis.get("company_name"),
-                "company_description": analysis.get("company_description"),
-                "company_summary": analysis.get("company_summary"),
-                "industry": analysis.get("industry"),
-                "competitors": analysis.get("competitors", [])
-            }
+            "data": final_data
         })
         
     except Exception as e:
@@ -288,3 +370,38 @@ def _fallback_keyword_detection(company_name: str, text_content: str) -> str:
         return "other"
     
     return max(industry_scores, key=industry_scores.get)
+
+
+def _get_analysis_cache_key(url: str) -> str:
+    """Generate cache key for complete analysis."""
+    import hashlib
+    normalized_url = url.rstrip('/').lower()
+    return f"analysis:{hashlib.md5(normalized_url.encode()).hexdigest()}"
+
+
+def _get_cached_analysis(url: str) -> Optional[Dict]:
+    """Get cached complete analysis."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_analysis_cache_key(url)
+        cached = redis_client.get(cache_key)
+        if cached:
+            if isinstance(cached, bytes):
+                cached = cached.decode('utf-8')
+            return json.loads(cached)
+        return None
+    except Exception as e:
+        print(f"Cache retrieval failed: {e}")
+        return None
+
+
+def _cache_analysis(url: str, analysis: Dict, ttl: int = 86400) -> None:
+    """Cache complete analysis (24 hour TTL)."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_analysis_cache_key(url)
+        redis_client.setex(cache_key, ttl, json.dumps(analysis))
+    except Exception as e:
+        print(f"Cache storage failed: {e}")
