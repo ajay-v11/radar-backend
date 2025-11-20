@@ -535,15 +535,50 @@
         <p id="loadingText">Processing...</p>
       </div>
 
+      <!-- Live Stream Output -->
+      <div class="card results-section" id="liveStream" style="display: none">
+        <h2>🔴 Live Stream Output</h2>
+        <div
+          id="liveStreamContent"
+          style="
+            font-family: monospace;
+            font-size: 0.9em;
+            max-height: 600px;
+            overflow-y: auto;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+          "></div>
+      </div>
+
       <!-- Results Section -->
       <div class="card results-section" id="results" style="display: none">
-        <h2>📊 Results</h2>
+        <h2>📊 Final Results</h2>
         <div id="resultsContent"></div>
       </div>
     </div>
 
     <script>
       let currentState = {};
+      let liveStreamHTML = '';
+      let currentCategory = null;
+      let categoryQueries = {};
+
+      function addToLiveStream(message, color = '#d4d4d4') {
+        const timestamp = new Date().toLocaleTimeString();
+        liveStreamHTML += `<div style="color: ${color}; margin: 5px 0;">[${timestamp}] ${message}</div>`;
+        const streamDiv = document.getElementById('liveStreamContent');
+        streamDiv.innerHTML = liveStreamHTML;
+        streamDiv.scrollTop = streamDiv.scrollHeight;
+      }
+
+      function clearLiveStream() {
+        liveStreamHTML = '';
+        currentCategory = null;
+        categoryQueries = {};
+        document.getElementById('liveStreamContent').innerHTML = '';
+      }
 
       async function runIntegratedFlow() {
         const companyUrl = document.getElementById('companyUrl').value;
@@ -560,10 +595,14 @@
         // Disable button
         document.getElementById('runBtn').disabled = true;
 
-        // Show flow indicator and loading
+        // Show flow indicator, loading, and live stream
         document.getElementById('flowIndicator').style.display = 'flex';
         document.getElementById('loading').classList.add('active');
         document.getElementById('results').style.display = 'none';
+        document.getElementById('liveStream').style.display = 'block';
+        clearLiveStream();
+
+        addToLiveStream('🚀 Starting integrated flow...', '#4caf50');
 
         // Reset flow steps
         ['step1', 'step2', 'step3'].forEach((id) => {
@@ -575,6 +614,11 @@
           document.getElementById('step1').classList.add('active');
           document.getElementById('loadingText').textContent =
             'Step 1: Checking cache...';
+
+          addToLiveStream('', '#666');
+          addToLiveStream('═══════════════════════════════════════', '#666');
+          addToLiveStream('📍 STEP 1: INDUSTRY DETECTOR', '#4fc3f7');
+          addToLiveStream('═══════════════════════════════════════', '#666');
 
           const startTime1 = Date.now();
           const detectorData = await streamIndustryDetection(
@@ -588,6 +632,10 @@
             detectorTime: time1,
           };
 
+          addToLiveStream(
+            `✅ Industry detection completed in ${time1}ms`,
+            '#4caf50'
+          );
           document.getElementById('step1').classList.remove('active');
           document.getElementById('step1').classList.add('completed');
 
@@ -599,6 +647,11 @@
           document.getElementById('loadingText').textContent =
             'Step 2: Checking cache...';
 
+          addToLiveStream('', '#666');
+          addToLiveStream('═══════════════════════════════════════', '#666');
+          addToLiveStream('📍 STEP 2: QUERY GENERATOR', '#4fc3f7');
+          addToLiveStream('═══════════════════════════════════════', '#666');
+
           const startTime2 = Date.now();
           const queryData = await streamQueryGeneration(
             companyUrl,
@@ -608,6 +661,10 @@
           const time2 = Date.now() - startTime2;
           currentState = {...currentState, ...queryData, queryTime: time2};
 
+          addToLiveStream(
+            `✅ Query generation completed in ${time2}ms`,
+            '#4caf50'
+          );
           document.getElementById('step2').classList.remove('active');
           document.getElementById('step2').classList.add('completed');
 
@@ -723,27 +780,47 @@
                           const event = JSON.parse(jsonStr);
                           console.log('Industry Detector Event:', event);
 
-                          // Update loading text with progress based on step
+                          // Update loading text and live stream with progress
                           if (event.step === 'initialize') {
                             document.getElementById('loadingText').textContent =
                               '🚀 Initializing analysis...';
+                            addToLiveStream(
+                              '🚀 Initializing analysis...',
+                              '#ffeb3b'
+                            );
                           } else if (event.step === 'scraping') {
                             if (event.status === 'cached') {
                               document.getElementById(
                                 'loadingText'
                               ).textContent =
                                 '⚡ Using cached website content (instant)';
+                              addToLiveStream(
+                                '⚡ CACHE HIT - Using cached website content',
+                                '#4caf50'
+                              );
                             } else {
                               document.getElementById(
                                 'loadingText'
                               ).textContent = '🔍 Scraping website...';
+                              addToLiveStream(
+                                '🔍 Scraping website...',
+                                '#ffeb3b'
+                              );
                             }
                           } else if (event.step === 'analyzing') {
                             document.getElementById('loadingText').textContent =
                               '🤖 Analyzing with AI...';
+                            addToLiveStream(
+                              '🤖 Analyzing with AI...',
+                              '#ffeb3b'
+                            );
                           } else if (event.step === 'competitors') {
                             document.getElementById('loadingText').textContent =
                               '🏢 Identifying competitors...';
+                            addToLiveStream(
+                              '🏢 Identifying competitors...',
+                              '#ffeb3b'
+                            );
                           } else if (
                             event.step === 'complete' &&
                             event.status === 'success'
@@ -753,6 +830,49 @@
                               event.data
                             );
                             finalData = event.data;
+
+                            // Display industry detection results
+                            addToLiveStream('', '#666');
+                            addToLiveStream(
+                              '📊 INDUSTRY DETECTION RESULTS:',
+                              '#4fc3f7'
+                            );
+                            addToLiveStream(
+                              `  Company: ${finalData.company_name || 'N/A'}`,
+                              '#fff'
+                            );
+                            addToLiveStream(
+                              `  Industry: ${finalData.industry || 'N/A'}`,
+                              '#fff'
+                            );
+                            addToLiveStream(
+                              `  Description: ${
+                                finalData.company_description || 'N/A'
+                              }`,
+                              '#fff'
+                            );
+                            if (finalData.company_summary) {
+                              addToLiveStream(
+                                `  Summary: ${finalData.company_summary}`,
+                                '#fff'
+                              );
+                            }
+                            if (
+                              finalData.competitors &&
+                              finalData.competitors.length > 0
+                            ) {
+                              addToLiveStream(
+                                `  Competitors (${finalData.competitors.length}):`,
+                                '#fff'
+                              );
+                              finalData.competitors.forEach((comp, i) => {
+                                addToLiveStream(
+                                  `    ${i + 1}. ${comp}`,
+                                  '#81c784'
+                                );
+                              });
+                            }
+
                             // Resolve immediately when we get complete event
                             resolve(finalData);
                             return;
@@ -858,36 +978,77 @@
                           const event = JSON.parse(jsonStr);
                           console.log('Query Generator Event:', event);
 
-                          // Update loading text with progress based on step
+                          // Update loading text and live stream with progress
                           if (event.step === 'initialize') {
                             document.getElementById('loadingText').textContent =
                               '🚀 Initializing query generation...';
+                            addToLiveStream(
+                              '🚀 Initializing query generation...',
+                              '#ffeb3b'
+                            );
                           } else if (event.step === 'industry_detection') {
                             document.getElementById('loadingText').textContent =
                               '🔍 Detecting industry...';
+                            addToLiveStream(
+                              '🔍 Using industry from previous step...',
+                              '#ffeb3b'
+                            );
                           } else if (event.step === 'query_generation') {
                             if (event.status === 'cached') {
                               document.getElementById(
                                 'loadingText'
                               ).textContent =
                                 '⚡ Using cached queries (instant)';
+                              addToLiveStream(
+                                '⚡ CACHE HIT - Using cached queries',
+                                '#4caf50'
+                              );
                             } else {
                               document.getElementById(
                                 'loadingText'
                               ).textContent = '📝 Generating new queries...';
+                              addToLiveStream(
+                                '📝 Generating new queries...',
+                                '#ffeb3b'
+                              );
                             }
                           } else if (event.step === 'category') {
                             if (event.status === 'in_progress') {
+                              const categoryName =
+                                event.data?.category_name || 'queries';
                               document.getElementById(
                                 'loadingText'
-                              ).textContent = `📝 Generating ${
-                                event.data?.category_name || 'queries'
-                              }...`;
+                              ).textContent = `📝 Generating ${categoryName}...`;
+
+                              // Start new category
+                              if (currentCategory !== categoryName) {
+                                currentCategory = categoryName;
+                                categoryQueries[categoryName] = [];
+                                addToLiveStream('', '#666');
+                                addToLiveStream(
+                                  `📂 Category: ${categoryName}`,
+                                  '#ba68c8'
+                                );
+                              }
                             } else if (event.status === 'completed') {
-                              totalQueries += event.data?.queries?.length || 0;
+                              const queries = event.data?.queries || [];
+                              totalQueries += queries.length;
                               document.getElementById(
                                 'loadingText'
                               ).textContent = `✓ Generated ${totalQueries} queries so far...`;
+
+                              // Display queries one by one
+                              queries.forEach((query, i) => {
+                                addToLiveStream(
+                                  `  ${i + 1}. ${query}`,
+                                  '#81c784'
+                                );
+                              });
+
+                              addToLiveStream(
+                                `  ✓ ${queries.length} queries generated for this category`,
+                                '#4caf50'
+                              );
                             }
                           } else if (
                             event.step === 'complete' &&
@@ -898,6 +1059,27 @@
                               event.data
                             );
                             finalData = event.data;
+
+                            // Display summary
+                            addToLiveStream('', '#666');
+                            addToLiveStream(
+                              '📊 QUERY GENERATION SUMMARY:',
+                              '#4fc3f7'
+                            );
+                            addToLiveStream(
+                              `  Total Queries: ${
+                                finalData.queries?.length || 0
+                              }`,
+                              '#fff'
+                            );
+                            addToLiveStream(
+                              `  Categories: ${
+                                Object.keys(finalData.query_categories || {})
+                                  .length
+                              }`,
+                              '#fff'
+                            );
+
                             // Resolve immediately when we get complete event
                             resolve(finalData);
                             return;
@@ -1113,8 +1295,10 @@
 
       function clearResults() {
         document.getElementById('results').style.display = 'none';
+        document.getElementById('liveStream').style.display = 'none';
         document.getElementById('flowIndicator').style.display = 'none';
         document.getElementById('resultsContent').innerHTML = '';
+        clearLiveStream();
         currentState = {};
 
         // Reset flow steps

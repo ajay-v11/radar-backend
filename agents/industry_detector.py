@@ -12,7 +12,7 @@ from models.schemas import WorkflowState
 from config.settings import settings
 from utils.competitor_matcher import get_competitor_matcher
 from utils.vector_store import get_vector_store
-from utils.cache import get_cached_model_response, cache_model_response
+
 import json
 import logging
 import hashlib
@@ -20,6 +20,53 @@ from functools import wraps
 import time
 
 logger = logging.getLogger(__name__)
+
+# Constants for content limits and configuration
+MAX_SCRAPED_CONTENT_LENGTH = 5000  # Characters to keep from scraped content
+MAX_FALLBACK_CONTENT_LENGTH = 1000  # Characters for fallback keyword detection
+MAX_VECTOR_STORE_CONTENT_LENGTH = 2000  # Characters for vector storage
+SCRAPE_CACHE_TTL = 86400  # 24 hours in seconds
+OPENAI_TIMEOUT = 30.0  # Timeout for OpenAI API calls in seconds
+RETRY_MAX_ATTEMPTS = 2  # Number of retry attempts for API calls
+RETRY_DELAY = 1.0  # Delay between retries in seconds
+
+# Valid industry categories
+VALID_INDUSTRIES = ["technology", "retail", "healthcare", "finance", "food_services", "other"]
+
+# Industry keyword patterns for fallback classification
+INDUSTRY_KEYWORDS: Dict[str, List[str]] = {
+    "technology": [
+        "software", "tech", "technology", "saas", "cloud", "ai", "artificial intelligence",
+        "machine learning", "data", "analytics", "platform", "app", "application",
+        "digital", "cyber", "security", "it", "information technology", "computing",
+        "developer", "programming", "code", "api", "web", "mobile", "hardware",
+        "semiconductor", "chip", "electronics", "automation", "robotics", "iot"
+    ],
+    "retail": [
+        "retail", "store", "shop", "shopping", "ecommerce", "e-commerce", "marketplace",
+        "fashion", "clothing", "apparel", "accessories", "consumer", "goods",
+        "merchandise", "boutique", "outlet", "department store", "supermarket",
+        "grocery", "convenience", "wholesale", "distribution", "supply chain"
+    ],
+    "healthcare": [
+        "health", "healthcare", "medical", "medicine", "hospital", "clinic",
+        "pharmaceutical", "pharma", "biotech", "biotechnology", "drug", "therapy",
+        "treatment", "patient", "doctor", "physician", "nurse", "care", "wellness",
+        "fitness", "telemedicine", "telehealth", "diagnostic", "laboratory", "lab"
+    ],
+    "finance": [
+        "finance", "financial", "bank", "banking", "investment", "insurance",
+        "fintech", "payment", "credit", "loan", "mortgage", "wealth", "asset",
+        "trading", "stock", "securities", "fund", "capital", "accounting",
+        "tax", "audit", "cryptocurrency", "crypto", "blockchain", "wallet"
+    ],
+    "food_services": [
+        "food", "restaurant", "dining", "meal", "kitchen", "catering", "delivery",
+        "takeout", "fast food", "cafe", "coffee", "bakery", "bar", "pub",
+        "hospitality", "culinary", "chef", "recipe", "cooking", "grocery delivery",
+        "meal kit", "subscription box", "prepared meals", "food service"
+    ]
+}
 
 
 def detect_industry(state: WorkflowState) -> WorkflowState:
@@ -58,19 +105,33 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
         state["industry"] = "other"
         return state
     
+    # Check if complete industry analysis is cached
+    cached_analysis = _get_cached_industry_analysis(company_url)
+    if cached_analysis:
+        logger.info(f"Cache HIT for industry analysis: {company_url}")
+        # Merge cached data into state
+        state.update(cached_analysis)
+        return state
+    
     # Step 1: Scrape website content using Firecrawl
     scraped_content = _scrape_website(company_url, errors)
     state["scraped_content"] = scraped_content
     
     # Step 2: Analyze content with OpenAI
     if scraped_content:
-        analysis = _analyze_with_openai(
-            scraped_content=scraped_content,
-            company_url=company_url,
-            provided_name=company_name,
-            provided_description=company_description,
-            errors=errors
-        )
+        try:
+            analysis = _analyze_with_openai(
+                scraped_content=scraped_content,
+                company_url=company_url,
+                provided_name=company_name,
+                provided_description=company_description,
+                errors=errors
+            )
+        except Exception as e:
+            error_msg = f"OpenAI analysis failed after retries: {str(e)}"
+            errors.append(error_msg)
+            logger.error(error_msg)
+            analysis = None
         
         # Update state with analysis results
         if analysis:
@@ -81,7 +142,7 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
             
             # Extract competitor data (handle both old and new format)
             competitors_data = analysis.get("competitors", [])
-            if competitors_data and isinstance(competitors_data[0], dict):
+            if competitors_data and len(competitors_data) > 0 and isinstance(competitors_data[0], dict):
                 # New format with rich data
                 state["competitors"] = [c["name"] for c in competitors_data]
                 state["competitors_data"] = competitors_data
@@ -91,12 +152,17 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
                 state["competitors_data"] = []
             
             # Store in vector database for future use
-            _store_company_data(state, scraped_content)
+            storage_errors = _store_company_data(state, scraped_content)
+            if storage_errors:
+                errors.extend(storage_errors)
+            
+            # Cache the complete industry analysis result
+            _cache_industry_analysis(company_url, state)
         else:
             # Fallback to basic keyword detection if AI analysis fails
             state["industry"] = _fallback_keyword_detection(
                 company_name or "",
-                company_description or scraped_content[:1000]
+                company_description or scraped_content[:MAX_FALLBACK_CONTENT_LENGTH]
             )
             state["competitors"] = []
     else:
@@ -112,8 +178,58 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
 
 
 def _get_cache_key(url: str) -> str:
-    """Generate cache key for scraped content."""
-    return f"scrape:{hashlib.md5(url.encode()).hexdigest()}"
+    """Generate cache key for scraped content using SHA256 for better collision resistance."""
+    return f"scrape:{hashlib.sha256(url.encode()).hexdigest()}"
+
+
+def _get_industry_analysis_cache_key(url: str) -> str:
+    """Generate cache key for complete industry analysis."""
+    return f"industry_analysis:{hashlib.sha256(url.encode()).hexdigest()}"
+
+
+def _get_cached_industry_analysis(url: str) -> Optional[Dict]:
+    """Get cached industry analysis result."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_industry_analysis_cache_key(url)
+        cached = redis_client.get(cache_key)
+        if cached:
+            logger.info(f"Cache HIT for industry analysis: {url}")
+            # Redis returns bytes, decode if needed
+            if isinstance(cached, bytes):
+                cached = cached.decode('utf-8')
+            return json.loads(cached)
+        logger.debug(f"Cache MISS for industry analysis: {url}")
+        return None
+    except Exception as e:
+        logger.warning(f"Industry analysis cache retrieval failed: {e}")
+        return None
+
+
+def _cache_industry_analysis(url: str, state: WorkflowState, ttl: int = SCRAPE_CACHE_TTL) -> None:
+    """Cache complete industry analysis result (24 hour TTL by default)."""
+    try:
+        from config.database import get_redis_client
+        redis_client = get_redis_client()
+        cache_key = _get_industry_analysis_cache_key(url)
+        
+        # Cache only the analysis results, not the full state
+        cache_data = {
+            "company_name": state.get("company_name", ""),
+            "company_description": state.get("company_description", ""),
+            "company_summary": state.get("company_summary", ""),
+            "industry": state.get("industry", "other"),
+            "competitors": state.get("competitors", []),
+            "competitors_data": state.get("competitors_data", []),
+            "scraped_content": state.get("scraped_content", ""),
+            "errors": state.get("errors", [])
+        }
+        
+        redis_client.setex(cache_key, ttl, json.dumps(cache_data))
+        logger.info(f"Cached industry analysis for: {url}")
+    except Exception as e:
+        logger.warning(f"Industry analysis cache storage failed: {e}")
 
 
 def _get_cached_scrape(url: str) -> Optional[str]:
@@ -133,8 +249,8 @@ def _get_cached_scrape(url: str) -> Optional[str]:
         return None
 
 
-def _cache_scrape(url: str, content: str, ttl: int = 86400) -> None:
-    """Cache scraped content (24 hour TTL by default)."""
+def _cache_scrape(url: str, content: str, ttl: int = SCRAPE_CACHE_TTL) -> None:
+    """Cache scraped content (default TTL from settings)."""
     try:
         from config.database import get_redis_client
         redis_client = get_redis_client()
@@ -186,8 +302,8 @@ def _scrape_website(url: str, errors: List[str]) -> str:
             markdown_content = result["markdown"]
         
         if markdown_content:
-            # Limit to 5000 characters to reduce token usage
-            content = markdown_content[:5000]
+            # Limit content length to reduce token usage
+            content = markdown_content[:MAX_SCRAPED_CONTENT_LENGTH]
             
             # Cache the result
             _cache_scrape(url, content)
@@ -209,25 +325,31 @@ def _scrape_website(url: str, errors: List[str]) -> str:
         return ""
 
 
-def _retry_on_failure(max_attempts: int = 2, delay: float = 1.0):
+def _retry_on_failure(max_attempts: int = RETRY_MAX_ATTEMPTS, delay: float = RETRY_DELAY):
     """Decorator to retry function on failure."""
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
+            last_exception = None
             for attempt in range(max_attempts):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
+                    last_exception = e
                     if attempt == max_attempts - 1:
-                        raise
+                        logger.error(f"All {max_attempts} attempts failed. Last error: {e}")
+                        raise last_exception
                     logger.warning(f"Attempt {attempt + 1}/{max_attempts} failed: {e}. Retrying...")
                     time.sleep(delay)
+            # This should never be reached, but just in case
+            if last_exception:
+                raise last_exception
             return None
         return wrapper
     return decorator
 
 
-@_retry_on_failure(max_attempts=2, delay=1.0)
+@_retry_on_failure()
 def _analyze_with_openai(
     scraped_content: str,
     company_url: str,
@@ -250,11 +372,13 @@ def _analyze_with_openai(
         industry, and competitors, or None on failure
     """
     if not settings.OPENAI_API_KEY:
-        errors.append("OpenAI API key not configured for industry analysis")
+        error_msg = "OpenAI API key not configured for industry analysis"
+        errors.append(error_msg)
+        logger.error(error_msg)
         return None
     
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=OPENAI_TIMEOUT)
         
         # Create analysis prompt
         prompt = f"""Analyze the following website content and extract key information about the company.
@@ -312,20 +436,22 @@ Be specific and accurate."""
             ],
             temperature=0.3,  # Lower temperature for more consistent results
             max_tokens=1000,
+            timeout=OPENAI_TIMEOUT,
             response_format={"type": "json_object"}  # Ensure JSON response
         )
         
         result_text = response.choices[0].message.content
         if not result_text:
-            errors.append("OpenAI returned empty response for industry analysis")
+            error_msg = "OpenAI returned empty response for industry analysis"
+            errors.append(error_msg)
+            logger.error(error_msg)
             return None
         
         # Parse JSON response
         analysis = json.loads(result_text)
         
         # Validate and normalize industry
-        valid_industries = ["technology", "retail", "healthcare", "finance", "food_services", "other"]
-        if analysis.get("industry") not in valid_industries:
+        if analysis.get("industry") not in VALID_INDUSTRIES:
             analysis["industry"] = "other"
         
         # Ensure all required fields exist
@@ -363,18 +489,24 @@ Be specific and accurate."""
         return None
 
 
-def _store_company_data(state: WorkflowState, scraped_content: str) -> None:
+def _store_company_data(state: WorkflowState, scraped_content: str) -> List[str]:
     """
     Store company data and competitors in vector database.
     
     Args:
         state: WorkflowState with company information
         scraped_content: Scraped website content
+        
+    Returns:
+        List of error messages (empty if successful)
     """
+    errors = []
+    
     try:
         company_name = state.get("company_name", "")
         if not company_name:
-            return
+            logger.debug("No company name provided, skipping vector storage")
+            return errors
         
         # Store company profile
         vector_store = get_vector_store()
@@ -421,10 +553,10 @@ def _store_company_data(state: WorkflowState, scraped_content: str) -> None:
     except Exception as e:
         # Don't fail the workflow if storage fails
         error_msg = f"Failed to store company data in vector DB: {str(e)}"
-        errors = state.get("errors", [])
         errors.append(error_msg)
-        state["errors"] = errors
         logger.error(error_msg)
+    
+    return errors
 
 
 def _fallback_keyword_detection(company_name: str, text_content: str) -> str:
@@ -432,6 +564,7 @@ def _fallback_keyword_detection(company_name: str, text_content: str) -> str:
     Fallback keyword-based industry detection when AI analysis fails.
     
     This is the original simple keyword matching approach, used as a backup.
+    Uses module-level INDUSTRY_KEYWORDS constant for better performance.
     
     Args:
         company_name: Company name
@@ -440,41 +573,6 @@ def _fallback_keyword_detection(company_name: str, text_content: str) -> str:
     Returns:
         Detected industry category
     """
-    # Industry keyword patterns for classification
-    INDUSTRY_KEYWORDS: Dict[str, List[str]] = {
-        "technology": [
-            "software", "tech", "technology", "saas", "cloud", "ai", "artificial intelligence",
-            "machine learning", "data", "analytics", "platform", "app", "application",
-            "digital", "cyber", "security", "it", "information technology", "computing",
-            "developer", "programming", "code", "api", "web", "mobile", "hardware",
-            "semiconductor", "chip", "electronics", "automation", "robotics", "iot"
-        ],
-        "retail": [
-            "retail", "store", "shop", "shopping", "ecommerce", "e-commerce", "marketplace",
-            "fashion", "clothing", "apparel", "accessories", "consumer", "goods",
-            "merchandise", "boutique", "outlet", "department store", "supermarket",
-            "grocery", "convenience", "wholesale", "distribution", "supply chain"
-        ],
-        "healthcare": [
-            "health", "healthcare", "medical", "medicine", "hospital", "clinic",
-            "pharmaceutical", "pharma", "biotech", "biotechnology", "drug", "therapy",
-            "treatment", "patient", "doctor", "physician", "nurse", "care", "wellness",
-            "fitness", "telemedicine", "telehealth", "diagnostic", "laboratory", "lab"
-        ],
-        "finance": [
-            "finance", "financial", "bank", "banking", "investment", "insurance",
-            "fintech", "payment", "credit", "loan", "mortgage", "wealth", "asset",
-            "trading", "stock", "securities", "fund", "capital", "accounting",
-            "tax", "audit", "cryptocurrency", "crypto", "blockchain", "wallet"
-        ],
-        "food_services": [
-            "food", "restaurant", "dining", "meal", "kitchen", "catering", "delivery",
-            "takeout", "fast food", "cafe", "coffee", "bakery", "bar", "pub",
-            "hospitality", "culinary", "chef", "recipe", "cooking", "grocery delivery",
-            "meal kit", "subscription box", "prepared meals", "food service"
-        ]
-    }
-    
     # Combine text for analysis (lowercase for case-insensitive matching)
     combined_text = f"{company_name} {text_content}".lower()
     

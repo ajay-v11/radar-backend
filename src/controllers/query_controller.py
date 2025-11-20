@@ -72,14 +72,16 @@ async def generate_queries_stream(
         # Step 2: Check cache FIRST
         from agents.query_generator import _get_cached_queries, _get_query_cache_key, _cache_queries
         
-        cache_key = _get_query_cache_key(company_url, num_queries)
+        industry = state.get("industry", "other")
+        cache_key = _get_query_cache_key(company_url, industry, num_queries)
         print(f"\n{'='*60}")
         print(f"[CACHE CHECK] URL: {company_url}")
+        print(f"[CACHE CHECK] Industry: {industry}")
         print(f"[CACHE CHECK] Queries: {num_queries}")
         print(f"[CACHE CHECK] Key: {cache_key}")
-        logger.info(f"[CACHE CHECK] URL: {company_url}, Queries: {num_queries}, Key: {cache_key}")
+        logger.info(f"[CACHE CHECK] URL: {company_url}, Industry: {industry}, Queries: {num_queries}, Key: {cache_key}")
         
-        cached_result = _get_cached_queries(company_url, num_queries)
+        cached_result = _get_cached_queries(company_url, industry, num_queries)
         
         if cached_result:
             # CACHE HIT - Return instantly (no streaming needed)
@@ -189,7 +191,7 @@ async def generate_queries_stream(
             state["query_categories"] = query_categories
             
             # Cache the results for next time
-            _cache_queries(company_url, num_queries, all_queries, query_categories)
+            _cache_queries(company_url, industry, num_queries, all_queries, query_categories)
             print(f"[CACHE STORED] 💾 Cached {len(all_queries)} queries for future use\n")
             logger.info(f"[CACHE STORED] Cached {len(all_queries)} queries for future use")
         

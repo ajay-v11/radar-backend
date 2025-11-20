@@ -53,17 +53,34 @@ async def generate_queries_smart(request: QueryGenerationRequest):
         }
     """
     from agents.query_generator import _get_cached_queries
+    from agents.industry_detector import detect_industry
     
     num_queries = request.num_queries or 50
     
-    # Check cache first
-    cached = _get_cached_queries(str(request.company_url), num_queries)
+    # Need to detect industry first to check cache properly
+    # Quick industry detection (uses cache if available)
+    state = {
+        "company_url": str(request.company_url),
+        "company_name": request.company_name or "",
+        "company_description": "",
+        "errors": []
+    }
+    
+    # Detect industry (this is fast if cached)
+    state = detect_industry(state)
+    industry = state.get("industry", "other")
+    
+    # Check cache with industry
+    cached = _get_cached_queries(str(request.company_url), industry, num_queries)
     
     if cached:
         # INSTANT return with cached data
         return {
             "cached": True,
             "data": {
+                "industry": industry,
+                "company_name": state.get("company_name"),
+                "queries": cached["queries"],
                 "total_queries": len(cached["queries"]),
                 "query_categories": cached["query_categories"]
             }
