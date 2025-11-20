@@ -7,7 +7,6 @@ and identifies competitors.
 """
 
 from typing import Dict, List, Optional
-from openai import OpenAI
 from models.schemas import WorkflowState
 from config.settings import settings
 from utils.competitor_matcher import get_competitor_matcher
@@ -69,13 +68,13 @@ INDUSTRY_KEYWORDS: Dict[str, List[str]] = {
 }
 
 
-def detect_industry(state: WorkflowState) -> WorkflowState:
+def detect_industry(state: WorkflowState, llm_provider: str = "openai") -> WorkflowState:
     """
-    Enhanced industry detection using Firecrawl and OpenAI.
+    Enhanced industry detection using Firecrawl and specified LLM.
     
     This function:
     1. Scrapes the company website using Firecrawl
-    2. Uses OpenAI to analyze the content and extract:
+    2. Uses specified LLM to analyze the content and extract:
        - Company name (if not provided)
        - Company description/summary
        - Industry classification
@@ -83,6 +82,7 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
     
     Args:
         state: WorkflowState containing company_url and optionally company_name
+        llm_provider: LLM provider to use ("openai", "gemini", "llama", "claude")
         
     Returns:
         Updated WorkflowState with industry, company_name, company_description,
@@ -117,7 +117,7 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
     scraped_content = _scrape_website(company_url, errors)
     state["scraped_content"] = scraped_content
     
-    # Step 2: Analyze content with OpenAI
+    # Step 2: Analyze content with specified LLM
     if scraped_content:
         try:
             analysis = _analyze_with_openai(
@@ -125,7 +125,8 @@ def detect_industry(state: WorkflowState) -> WorkflowState:
                 company_url=company_url,
                 provided_name=company_name,
                 provided_description=company_description,
-                errors=errors
+                errors=errors,
+                llm_provider=llm_provider
             )
         except Exception as e:
             error_msg = f"OpenAI analysis failed after retries: {str(e)}"
@@ -263,7 +264,7 @@ def _cache_scrape(url: str, content: str, ttl: int = SCRAPE_CACHE_TTL) -> None:
 
 def _scrape_website(url: str, errors: List[str]) -> str:
     """
-    Scrape website content using Firecrawl with caching.
+    Scrape website content using Firecrawl with caching and retry logic.
     
     Args:
         url: Website URL to scrape
@@ -286,34 +287,98 @@ def _scrape_website(url: str, errors: List[str]) -> str:
         
         firecrawl = Firecrawl(api_key=settings.FIRECRAWL_API_KEY)
         
-        # Scrape the website with markdown format
-        result = firecrawl.scrape(
-            url=url,
-            formats=["markdown"],
-            only_main_content=True,
-            timeout=30000
-        )
+        # Try multiple strategies for scraping
+        strategies = [
+            # Strategy 1: Standard scrape with main content only
+            {
+                "formats": ["markdown"],
+                "only_main_content": True,
+                "timeout": 30000
+            },
+            # Strategy 2: Try without only_main_content (gets more content)
+            {
+                "formats": ["markdown"],
+                "only_main_content": False,
+                "timeout": 30000
+            },
+            # Strategy 3: Try with longer timeout
+            {
+                "formats": ["markdown"],
+                "only_main_content": True,
+                "timeout": 60000
+            }
+        ]
         
-        # Handle both dict and object responses
-        markdown_content = None
-        if hasattr(result, 'markdown') and result.markdown:
-            markdown_content = result.markdown
-        elif isinstance(result, dict) and "markdown" in result:
-            markdown_content = result["markdown"]
+        last_error = None
+        for i, strategy in enumerate(strategies, 1):
+            try:
+                logger.info(f"Attempting scrape strategy {i}/{len(strategies)} for {url}")
+                result = firecrawl.scrape(url=url, **strategy)
+                
+                # Handle both dict and object responses
+                markdown_content = None
+                if hasattr(result, 'markdown') and result.markdown:
+                    markdown_content = result.markdown
+                elif isinstance(result, dict) and "markdown" in result:
+                    markdown_content = result["markdown"]
+                
+                if markdown_content:
+                    # Limit content length to reduce token usage
+                    content = markdown_content[:MAX_SCRAPED_CONTENT_LENGTH]
+                    
+                    # Cache the result
+                    _cache_scrape(url, content)
+                    
+                    logger.info(f"Successfully scraped {len(content)} characters from {url} using strategy {i}")
+                    return content
+                else:
+                    logger.warning(f"Strategy {i} returned no markdown content for {url}")
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Strategy {i} failed for {url}: {last_error}")
+                if i < len(strategies):
+                    time.sleep(2)  # Wait before trying next strategy
+                continue
         
-        if markdown_content:
-            # Limit content length to reduce token usage
-            content = markdown_content[:MAX_SCRAPED_CONTENT_LENGTH]
-            
-            # Cache the result
-            _cache_scrape(url, content)
-            
-            logger.info(f"Successfully scraped {len(content)} characters from {url}")
-            return content
-        else:
-            errors.append(f"Firecrawl returned no content for {url}")
-            logger.error(f"Firecrawl returned no markdown content for {url}")
-            return ""
+        # All strategies failed - try fallback to main domain if this is a regional domain
+        if any(tld in url for tld in ['.co.in', '.co.uk', '.com.au', '.de', '.fr', '.jp']):
+            # Extract base domain and try .com version
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain_parts = parsed.netloc.split('.')
+            if len(domain_parts) >= 2:
+                base_domain = domain_parts[0] if domain_parts[0] != 'www' else domain_parts[1]
+                fallback_url = f"{parsed.scheme}://{base_domain}.com{parsed.path}"
+                
+                logger.info(f"Trying fallback domain: {fallback_url}")
+                try:
+                    result = firecrawl.scrape(
+                        url=fallback_url,
+                        formats=["markdown"],
+                        only_main_content=True,
+                        timeout=30000
+                    )
+                    
+                    markdown_content = None
+                    if hasattr(result, 'markdown') and result.markdown:
+                        markdown_content = result.markdown
+                    elif isinstance(result, dict) and "markdown" in result:
+                        markdown_content = result["markdown"]
+                    
+                    if markdown_content:
+                        content = markdown_content[:MAX_SCRAPED_CONTENT_LENGTH]
+                        _cache_scrape(url, content)  # Cache under original URL
+                        logger.info(f"Successfully scraped {len(content)} characters from fallback {fallback_url}")
+                        return content
+                except Exception as fallback_error:
+                    logger.warning(f"Fallback domain also failed: {fallback_error}")
+        
+        # All strategies and fallback failed
+        error_msg = f"All scraping strategies failed for {url}. Last error: {last_error}"
+        errors.append(error_msg)
+        logger.error(error_msg)
+        return ""
             
     except ImportError:
         errors.append("Firecrawl package not installed. Install with: pip install firecrawl-py")
@@ -349,16 +414,78 @@ def _retry_on_failure(max_attempts: int = RETRY_MAX_ATTEMPTS, delay: float = RET
     return decorator
 
 
+def _get_analysis_llm(llm_provider: str = "openai"):
+    """
+    Get LLM instance based on provider.
+    
+    Args:
+        llm_provider: Provider name ("openai", "gemini", "llama", "claude")
+        
+    Returns:
+        LLM instance or None if provider not available
+    """
+    try:
+        if llm_provider.lower() == "gemini":
+            if not settings.GEMINI_API_KEY:
+                logger.warning("Gemini API key not configured, falling back to OpenAI")
+                return None
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash-lite",
+                google_api_key=settings.GEMINI_API_KEY,
+                temperature=0.3,
+                max_tokens=1000
+            )
+        elif llm_provider.lower() == "llama":
+            if not settings.GROK_API_KEY:
+                logger.warning("Groq API key not configured, falling back to OpenAI")
+                return None
+            from langchain_groq import ChatGroq
+            return ChatGroq(
+                model="llama-3.1-8b-instant",
+                groq_api_key=settings.GROK_API_KEY,
+                temperature=0.3,
+                max_tokens=1000
+            )
+        elif llm_provider.lower() == "claude":
+            if not settings.ANTHROPIC_API_KEY:
+                logger.warning("Anthropic API key not configured, falling back to OpenAI")
+                return None
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model="claude-3-haiku-20240307",
+                api_key=settings.ANTHROPIC_API_KEY,
+                temperature=0.3,
+                max_tokens=1000
+            )
+        else:  # Default to OpenAI
+            if not settings.OPENAI_API_KEY:
+                logger.error("OpenAI API key not configured")
+                return None
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=settings.INDUSTRY_ANALYSIS_MODEL,
+                openai_api_key=settings.OPENAI_API_KEY,
+                temperature=0.3,
+                max_tokens=1000,
+                timeout=OPENAI_TIMEOUT
+            )
+    except Exception as e:
+        logger.error(f"Failed to initialize {llm_provider} LLM: {str(e)}")
+        return None
+
+
 @_retry_on_failure()
 def _analyze_with_openai(
     scraped_content: str,
     company_url: str,
     provided_name: str,
     provided_description: str,
-    errors: List[str]
+    errors: List[str],
+    llm_provider: str = "openai"
 ) -> Optional[Dict]:
     """
-    Analyze scraped content using OpenAI to extract company information.
+    Analyze scraped content using specified LLM to extract company information.
     
     Args:
         scraped_content: Markdown content from Firecrawl
@@ -366,19 +493,20 @@ def _analyze_with_openai(
         provided_name: User-provided company name (if any)
         provided_description: User-provided description (if any)
         errors: List to append error messages to
+        llm_provider: LLM provider to use ("openai", "gemini", "llama", "claude")
         
     Returns:
         Dictionary with company_name, company_description, company_summary,
         industry, and competitors, or None on failure
     """
-    if not settings.OPENAI_API_KEY:
-        error_msg = "OpenAI API key not configured for industry analysis"
+    llm = _get_analysis_llm(llm_provider)
+    if not llm:
+        error_msg = f"Could not initialize {llm_provider} LLM for industry analysis"
         errors.append(error_msg)
         logger.error(error_msg)
         return None
     
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=OPENAI_TIMEOUT)
         
         # Create analysis prompt
         prompt = f"""Analyze the following website content and extract key information about the company.
@@ -422,25 +550,16 @@ For competitors, provide 3-5 main competitors with:
 
 Be specific and accurate."""
 
-        response = client.chat.completions.create(
-            model=settings.INDUSTRY_ANALYSIS_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert business analyst specializing in company classification and competitive analysis. Always respond with valid JSON."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,  # Lower temperature for more consistent results
-            max_tokens=1000,
-            timeout=OPENAI_TIMEOUT,
-            response_format={"type": "json_object"}  # Ensure JSON response
-        )
+        # Use LangChain's structured output for JSON
+        from langchain_core.messages import SystemMessage, HumanMessage
         
-        result_text = response.choices[0].message.content
+        messages = [
+            SystemMessage(content="You are an expert business analyst specializing in company classification and competitive analysis. Always respond with valid JSON."),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        result_text = response.content
         if not result_text:
             error_msg = "OpenAI returned empty response for industry analysis"
             errors.append(error_msg)

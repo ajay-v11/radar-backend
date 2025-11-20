@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config.settings import settings
 from storage.rag_store import get_rag_store
 
-from src.routes import health_routes, industry_routes, visibility_routes, query_routes
+from src.routes import health_routes, industry_routes, visibility_routes, query_routes, parallel_analysis_routes
 
 # Configure logging
 logging.basicConfig(
@@ -43,6 +43,7 @@ def create_app() -> FastAPI:
     app.include_router(industry_routes.router)
     app.include_router(query_routes.router)
     app.include_router(visibility_routes.router)
+    app.include_router(parallel_analysis_routes.router)
     
     @app.on_event("startup")
     async def startup_event():

@@ -130,7 +130,14 @@ def _count_mentions_semantic(
     competitor_mention_counts: Dict[str, int] = {}
     
     # Normalize company name for case-insensitive matching
-    company_name_lower = company_name.lower()
+    company_name_lower = company_name.lower().strip()
+    
+    # Also create variations of company name (handle spacing issues)
+    company_name_variations = [
+        company_name_lower,
+        company_name_lower.replace(" ", ""),  # Remove spaces
+        company_name_lower.replace(" ", "-"),  # Replace with dash
+    ]
     
     # Get competitor matcher for semantic search
     try:
@@ -144,8 +151,9 @@ def _count_mentions_semantic(
         if not response:
             continue
         
-        # 1. Exact string matching for company name
-        company_mentioned = company_name_lower in response.lower()
+        # 1. Exact string matching for company name (with variations)
+        response_lower = response.lower()
+        company_mentioned = any(var in response_lower for var in company_name_variations)
         
         # 2. Semantic matching for competitors (if available)
         competitors_found = []

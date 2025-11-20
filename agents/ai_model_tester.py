@@ -1,311 +1,252 @@
 """
 AI Model Tester Agent
 
-This agent executes queries against multiple AI models and collects
-their responses for visibility analysis.
+This agent tests generated queries against multiple AI models and collects responses.
 """
 
-from typing import Dict, List, Optional
-from openai import OpenAI
-from anthropic import Anthropic
-from config.settings import settings
+import logging
+from typing import Dict, List
 from models.schemas import WorkflowState
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+# Constants
+MAX_MODELS_ALLOWED = 2  # Limit for now, easy to change to 4 later
+DEFAULT_MODELS = ["chatgpt", "gemini"]
+OPENAI_TIMEOUT = 30.0
+MAX_TOKENS = 500
+TEMPERATURE = 0.7
 
 
 def test_ai_models(state: WorkflowState) -> WorkflowState:
     """
-    Execute all queries against selected AI models, collecting responses.
-    
-    This function takes the generated queries from the workflow state and
-    executes each one against the selected AI models. Responses are collected
-    and organized by model name. API failures are handled gracefully with a
-    single retry attempt.
+    Test queries against multiple AI models.
     
     Args:
-        state: WorkflowState containing queries list and optional models list
+        state: WorkflowState containing queries and models list
         
     Returns:
-        Updated WorkflowState with model_responses dictionary populated
-        
-    Requirements: 5.1, 5.2, 5.3, 5.4, 5.5
+        Updated WorkflowState with model_responses populated
     """
     queries = state.get("queries", [])
+    models = state.get("models", DEFAULT_MODELS)[:MAX_MODELS_ALLOWED]
     errors = state.get("errors", [])
     
-    # Get models to test (default to chatgpt and gemini)
-    models_to_test = state.get("models", settings.DEFAULT_MODELS)
+    if not queries:
+        errors.append("No queries to test")
+        state["errors"] = errors
+        return state
+    
+    if not models:
+        errors.append("No models specified")
+        state["errors"] = errors
+        return state
+    
+    logger.info(f"Testing {len(queries)} queries against {len(models)} models")
     
     # Initialize response storage
-    model_responses: Dict[str, List[str]] = {model: [] for model in models_to_test}
+    model_responses: Dict[str, List[str]] = {model: [] for model in models}
     
-    # Execute each query against all selected models
-    for query in queries:
-        for model_name in models_to_test:
-            response = _query_model(model_name, query, errors)
-            model_responses[model_name].append(response)
+    # Test each query against all models
+    for i, query in enumerate(queries):
+        logger.info(f"Testing query {i+1}/{len(queries)}: {query[:50]}...")
+        
+        for model in models:
+            try:
+                response = _query_model(model, query)
+                model_responses[model].append(response)
+                logger.debug(f"  {model}: {len(response)} chars")
+            except Exception as e:
+                error_msg = f"Error testing {model} on query '{query[:50]}...': {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                model_responses[model].append("")  # Empty response on error
     
-    # Update state with collected responses
     state["model_responses"] = model_responses
     state["errors"] = errors
+    
+    logger.info(f"Completed testing. Total responses: {sum(len(r) for r in model_responses.values())}")
     
     return state
 
 
-def _query_model(model_name: str, query: str, errors: List[str]) -> str:
+def _query_model(model: str, query: str) -> str:
     """
-    Route query to the appropriate model handler.
+    Query a specific AI model.
     
     Args:
-        model_name: Name of the model to query
-        query: The query string to execute
-        errors: List to append error messages to
+        model: Model name (chatgpt, gemini, claude, llama, grok, deepseek)
+        query: Query string
         
     Returns:
-        Response string from the model, or empty string on failure
+        Model response as string
     """
-    model_handlers = {
-        "chatgpt": _query_chatgpt,
-        "claude": _query_claude,
-        "gemini": _query_gemini,
-        "llama": _query_llama,
-        "mistral": _query_mistral,
-        "qwen": _query_qwen,
-    }
+    model_lower = model.lower()
     
-    handler = model_handlers.get(model_name)
-    if not handler:
-        errors.append(f"Unknown model: {model_name}")
+    if model_lower == "chatgpt":
+        return _query_chatgpt(query)
+    elif model_lower == "gemini":
+        return _query_gemini(query)
+    elif model_lower == "claude":
+        return _query_claude(query)
+    elif model_lower == "llama":
+        return _query_llama(query)
+    elif model_lower == "grok":
+        return _query_grok(query)
+    elif model_lower == "deepseek":
+        return _query_deepseek(query)
+    else:
+        logger.error(f"Unknown model: {model}")
         return ""
-    
-    return handler(query, errors)
 
 
-def _query_chatgpt(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against ChatGPT with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
-        
-    Returns:
-        Response string from ChatGPT, or empty string on failure
-    """
+def _query_chatgpt(query: str) -> str:
+    """Query ChatGPT (OpenAI) via LangChain."""
     if not settings.OPENAI_API_KEY:
-        errors.append(f"ChatGPT: API key not configured")
+        logger.error("OpenAI API key not configured")
         return ""
     
-    max_retries = 2
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
-    
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model=settings.CHATGPT_MODEL,
-                messages=[{"role": "user", "content": query}],
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content or ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"ChatGPT API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
-    
-    return ""
-
-
-def _query_claude(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against Claude with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
+    try:
+        from langchain_openai import ChatOpenAI
         
-    Returns:
-        Response string from Claude, or empty string on failure
-    """
-    if not settings.ANTHROPIC_API_KEY:
-        errors.append(f"Claude: API key not configured")
+        llm = ChatOpenAI(
+            model=settings.CHATGPT_MODEL,
+            openai_api_key=settings.OPENAI_API_KEY,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            timeout=OPENAI_TIMEOUT
+        )
+        
+        response = llm.invoke(query)
+        return response.content or ""
+    
+    except Exception as e:
+        logger.error(f"ChatGPT API error: {str(e)}")
         return ""
-    
-    max_retries = 2
-    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    
-    for attempt in range(max_retries):
-        try:
-            response = client.messages.create(
-                model=settings.CLAUDE_MODEL,
-                max_tokens=500,
-                messages=[{"role": "user", "content": query}]
-            )
-            if response.content and len(response.content) > 0:
-                return response.content[0].text
-            return ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"Claude API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
-    
-    return ""
 
 
-def _query_gemini(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against Gemini with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
-        
-    Returns:
-        Response string from Gemini, or empty string on failure
-    """
+def _query_gemini(query: str) -> str:
+    """Query Gemini (Google) via LangChain."""
     if not settings.GEMINI_API_KEY:
-        errors.append(f"Gemini: API key not configured")
+        logger.error("Gemini API key not configured")
         return ""
     
-    max_retries = 2
-    
-    for attempt in range(max_retries):
-        try:
-            from langchain_google_genai import ChatGoogleGenerativeAI
-            
-            llm = ChatGoogleGenerativeAI(
-                model=settings.GEMINI_MODEL,
-                google_api_key=settings.GEMINI_API_KEY,
-                temperature=0.7,
-                max_output_tokens=500
-            )
-            response = llm.invoke(query)
-            return response.content or ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"Gemini API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
-    
-    return ""
-
-
-def _query_llama(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against Llama via Groq with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
         
-    Returns:
-        Response string from Llama, or empty string on failure
-    """
+        llm = ChatGoogleGenerativeAI(
+            model=settings.GEMINI_MODEL,
+            google_api_key=settings.GEMINI_API_KEY,
+            temperature=TEMPERATURE,
+            max_output_tokens=MAX_TOKENS
+        )
+        
+        response = llm.invoke(query)
+        return response.content or ""
+    
+    except Exception as e:
+        logger.error(f"Gemini API error: {str(e)}")
+        return ""
+
+
+def _query_claude(query: str) -> str:
+    """Query Claude (Anthropic) via LangChain."""
+    if not settings.ANTHROPIC_API_KEY:
+        logger.error("Anthropic API key not configured")
+        return ""
+    
+    try:
+        from langchain_anthropic import ChatAnthropic
+        
+        llm = ChatAnthropic(
+            model=settings.CLAUDE_MODEL,
+            anthropic_api_key=settings.ANTHROPIC_API_KEY,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            timeout=OPENAI_TIMEOUT
+        )
+        
+        response = llm.invoke(query)
+        return response.content or ""
+    
+    except Exception as e:
+        logger.error(f"Claude API error: {str(e)}")
+        return ""
+
+
+def _query_llama(query: str) -> str:
+    """Query Llama 3.1 8B Instant (via Groq) using LangChain."""
     if not settings.GROK_API_KEY:
-        errors.append(f"Llama (Groq): API key not configured")
+        logger.error("Groq API key not configured")
         return ""
     
-    max_retries = 2
-    
-    for attempt in range(max_retries):
-        try:
-            # Groq uses OpenAI-compatible API
-            client = OpenAI(
-                api_key=settings.GROK_API_KEY,
-                base_url="https://api.groq.com/openai/v1"
-            )
-            response = client.chat.completions.create(
-                model=settings.GROQ_LLAMA_MODEL,
-                messages=[{"role": "user", "content": query}],
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content or ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"Llama (Groq) API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
-    
-    return ""
-
-
-def _query_mistral(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against Mistral via OpenRouter with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
+    try:
+        from langchain_groq import ChatGroq
         
-    Returns:
-        Response string from Mistral, or empty string on failure
-    """
-    if not settings.OPEN_ROUTER_API_KEY:
-        errors.append(f"Mistral (OpenRouter): API key not configured")
-        return ""
-    
-    max_retries = 2
-    
-    for attempt in range(max_retries):
-        try:
-            # OpenRouter uses OpenAI-compatible API
-            client = OpenAI(
-                api_key=settings.OPEN_ROUTER_API_KEY,
-                base_url="https://openrouter.ai/api/v1"
-            )
-            response = client.chat.completions.create(
-                model=settings.OPENROUTER_MISTRAL_MODEL,
-                messages=[{"role": "user", "content": query}],
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content or ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"Mistral (OpenRouter) API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
-    
-    return ""
-
-
-def _query_qwen(query: str, errors: List[str]) -> str:
-    """
-    Execute a single query against Qwen via OpenRouter with retry logic.
-    
-    Args:
-        query: The query string to execute
-        errors: List to append error messages to
+        llm = ChatGroq(
+            model=settings.GROQ_LLAMA_MODEL,
+            groq_api_key=settings.GROK_API_KEY,
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            timeout=OPENAI_TIMEOUT
+        )
         
-    Returns:
-        Response string from Qwen, or empty string on failure
-    """
+        response = llm.invoke(query)
+        return response.content or ""
+    
+    except Exception as e:
+        logger.error(f"Llama API error: {str(e)}")
+        return ""
+
+
+def _query_grok(query: str) -> str:
+    """Query Grok 4.1 Fast (via OpenRouter) using LangChain."""
     if not settings.OPEN_ROUTER_API_KEY:
-        errors.append(f"Qwen (OpenRouter): API key not configured")
+        logger.error("OpenRouter API key not configured")
         return ""
     
-    max_retries = 2
+    try:
+        from langchain_openai import ChatOpenAI
+        
+        llm = ChatOpenAI(
+            model=settings.OPENROUTER_GROK_MODEL,
+            openai_api_key=settings.OPEN_ROUTER_API_KEY,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            timeout=OPENAI_TIMEOUT
+        )
+        
+        response = llm.invoke(query)
+        return response.content or ""
     
-    for attempt in range(max_retries):
-        try:
-            # OpenRouter uses OpenAI-compatible API
-            client = OpenAI(
-                api_key=settings.OPEN_ROUTER_API_KEY,
-                base_url="https://openrouter.ai/api/v1"
-            )
-            response = client.chat.completions.create(
-                model=settings.OPENROUTER_QWEN_MODEL,
-                messages=[{"role": "user", "content": query}],
-                max_tokens=500,
-                temperature=0.7
-            )
-            return response.choices[0].message.content or ""
-            
-        except Exception as e:
-            if attempt == max_retries - 1:
-                errors.append(f"Qwen (OpenRouter) API error on query '{query[:50]}...' (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                return ""
+    except Exception as e:
+        logger.error(f"Grok API error: {str(e)}")
+        return ""
+
+
+def _query_deepseek(query: str) -> str:
+    """Query DeepSeek Chat (via OpenRouter) using LangChain."""
+    if not settings.OPEN_ROUTER_API_KEY:
+        logger.error("OpenRouter API key not configured")
+        return ""
     
-    return ""
+    try:
+        from langchain_openai import ChatOpenAI
+        
+        llm = ChatOpenAI(
+            model=settings.OPENROUTER_DEEPSEEK_MODEL,
+            openai_api_key=settings.OPEN_ROUTER_API_KEY,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=TEMPERATURE,
+            max_tokens=MAX_TOKENS,
+            timeout=OPENAI_TIMEOUT
+        )
+        
+        response = llm.invoke(query)
+        return response.content or ""
+    
+    except Exception as e:
+        logger.error(f"DeepSeek API error: {str(e)}")
+        return ""

@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     INDUSTRY_ANALYSIS_MODEL: str = "gpt-4o-mini"  # For industry detection and analysis
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"  # Cheaper than Sonnet
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"  # Cost-effective Gemini
-    GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Fast and free on Groq
-    OPENROUTER_MISTRAL_MODEL: str = "mistralai/mistral-7b-instruct"  # Cost-effective
-    OPENROUTER_QWEN_MODEL: str = "qwen/qwen-2-7b-instruct"  # Cost-effective
+    GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Llama 3.1 8B via Groq (fastest)
+    OPENROUTER_GROK_MODEL: str = "x-ai/grok-4.1-fast"  # Grok 4.1 Fast via OpenRouter
+    OPENROUTER_DEEPSEEK_MODEL: str = "deepseek/deepseek-chat-v3-0324:free"  # DeepSeek free tier
     
     # Default models to test (can be overridden by user)
     DEFAULT_MODELS: list = ["chatgpt", "gemini"]

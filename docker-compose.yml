@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ChromaDB - Vector database for RAG and semantic search
   # Use for: company embeddings, industry detection, competitor similarity

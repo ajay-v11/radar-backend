@@ -451,8 +451,8 @@
             <input
               type="url"
               id="companyUrl"
-              placeholder="https://www.hellofresh.com"
-              value="https://www.hellofresh.com" />
+              placeholder="https://www.crocs.in"
+              value="https://www.crocs.in" />
             <small>The website will be scraped and analyzed</small>
           </div>
           <div class="form-group">
@@ -465,11 +465,11 @@
           </div>
         </div>
 
-        <!-- Step 2: Query Generator -->
+        <!-- Step 2: Query Generator & Parallel Testing -->
         <div class="card">
           <h2>
             <span class="step-badge">2</span>
-            Query Generator
+            Parallel Testing & Analysis
           </h2>
           <div class="form-group">
             <label for="numQueries">Number of Queries</label>
@@ -483,7 +483,74 @@
             <small>More queries = better coverage but slower</small>
           </div>
           <div class="form-group">
-            <label>Data Source</label>
+            <label for="llmProvider"
+              >LLM Provider (for Industry & Queries)</label
+            >
+            <select id="llmProvider">
+              <option value="gemini" selected>Gemini (Fast, Free)</option>
+              <option value="llama">Llama (Via Groq)</option>
+              <option value="openai">OpenAI (gpt-4o-mini)</option>
+              <option value="claude">Claude (Haiku)</option>
+            </select>
+            <small>Used for industry detection and query generation</small>
+          </div>
+          <div class="form-group">
+            <label>Models to Test Against</label>
+            <div
+              style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px">
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  font-weight: normal;
+                ">
+                <input
+                  type="checkbox"
+                  id="modelChatGPT"
+                  value="chatgpt"
+                  checked />
+                ChatGPT (gpt-3.5-turbo)
+              </label>
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  font-weight: normal;
+                ">
+                <input
+                  type="checkbox"
+                  id="modelGemini"
+                  value="gemini"
+                  checked />
+                Gemini (Flash Lite)
+              </label>
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  font-weight: normal;
+                ">
+                <input type="checkbox" id="modelLlama" value="llama" />
+                Llama (Via Groq)
+              </label>
+              <label
+                style="
+                  display: flex;
+                  align-items: center;
+                  gap: 8px;
+                  font-weight: normal;
+                ">
+                <input type="checkbox" id="modelClaude" value="claude" />
+                Claude (Haiku)
+              </label>
+            </div>
+            <small>Select at least 2 models for comparison</small>
+          </div>
+          <div class="form-group">
+            <label>Workflow</label>
             <div
               style="
                 padding: 12px;
@@ -491,9 +558,11 @@
                 border-radius: 8px;
                 color: #667eea;
               ">
-              ✓ Uses data from Industry Detector<br />
-              ✓ No redundant API calls<br />
-              ✓ Cached for 24 hours
+              ✓ Industry Detection<br />
+              ✓ Query Generation<br />
+              ✓ Parallel Batch Testing<br />
+              ✓ Real-time Analysis<br />
+              ✓ Final Aggregation
             </div>
           </div>
         </div>
@@ -502,8 +571,11 @@
       <!-- Action Buttons -->
       <div class="card">
         <div class="button-group">
-          <button class="btn-primary" onclick="runIntegratedFlow()" id="runBtn">
-            🚀 Run Integrated Flow
+          <button
+            class="btn-primary"
+            onclick="runParallelAnalysis()"
+            id="runBtn">
+            🚀 Run Parallel Analysis
           </button>
           <button class="btn-secondary" onclick="clearResults()">
             🗑️ Clear Results
@@ -562,8 +634,6 @@
     <script>
       let currentState = {};
       let liveStreamHTML = '';
-      let currentCategory = null;
-      let categoryQueries = {};
 
       function addToLiveStream(message, color = '#d4d4d4') {
         const timestamp = new Date().toLocaleTimeString();
@@ -575,20 +645,35 @@
 
       function clearLiveStream() {
         liveStreamHTML = '';
-        currentCategory = null;
-        categoryQueries = {};
         document.getElementById('liveStreamContent').innerHTML = '';
       }
 
-      async function runIntegratedFlow() {
+      async function runParallelAnalysis() {
         const companyUrl = document.getElementById('companyUrl').value;
         const companyName = document.getElementById('companyName').value;
         const numQueries = parseInt(
           document.getElementById('numQueries').value
         );
+        const llmProvider = document.getElementById('llmProvider').value;
+
+        // Get selected models from checkboxes
+        const selectedModels = [];
+        ['modelChatGPT', 'modelGemini', 'modelLlama', 'modelClaude'].forEach(
+          (id) => {
+            const checkbox = document.getElementById(id);
+            if (checkbox && checkbox.checked) {
+              selectedModels.push(checkbox.value);
+            }
+          }
+        );
 
         if (!companyUrl) {
           alert('Please enter a company URL');
+          return;
+        }
+
+        if (selectedModels.length < 2) {
+          alert('Please select at least 2 models to test');
           return;
         }
 
@@ -602,7 +687,11 @@
         document.getElementById('liveStream').style.display = 'block';
         clearLiveStream();
 
-        addToLiveStream('🚀 Starting integrated flow...', '#4caf50');
+        addToLiveStream('🚀 Starting parallel analysis flow...', '#4caf50');
+        addToLiveStream(
+          `📊 Testing against: ${selectedModels.join(', ')}`,
+          '#4fc3f7'
+        );
 
         // Reset flow steps
         ['step1', 'step2', 'step3'].forEach((id) => {
@@ -610,90 +699,202 @@
         });
 
         try {
-          // Step 1: Industry Detector (Smart - checks cache first)
-          document.getElementById('step1').classList.add('active');
-          document.getElementById('loadingText').textContent =
-            'Step 1: Checking cache...';
+          const startTime = Date.now();
 
-          addToLiveStream('', '#666');
-          addToLiveStream('═══════════════════════════════════════', '#666');
-          addToLiveStream('📍 STEP 1: INDUSTRY DETECTOR', '#4fc3f7');
-          addToLiveStream('═══════════════════════════════════════', '#666');
-
-          const startTime1 = Date.now();
-          const detectorData = await streamIndustryDetection(
-            companyUrl,
-            companyName
+          // Call the parallel analysis endpoint
+          const response = await fetch(
+            'http://localhost:8000/parallel/test-and-analyze',
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                company_url: companyUrl,
+                company_name: companyName || null,
+                num_queries: numQueries,
+                llm_provider: llmProvider,
+                batch_size: 5,
+                models: selectedModels,
+              }),
+            }
           );
-          const time1 = Date.now() - startTime1;
-          currentState = {
-            ...detectorData,
-            num_queries: numQueries,
-            detectorTime: time1,
-          };
 
-          addToLiveStream(
-            `✅ Industry detection completed in ${time1}ms`,
-            '#4caf50'
-          );
-          document.getElementById('step1').classList.remove('active');
-          document.getElementById('step1').classList.add('completed');
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
 
-          // Small delay for visual effect
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          // Process SSE stream
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
 
-          // Step 2: Query Generator (Smart - checks cache first)
-          document.getElementById('step2').classList.add('active');
-          document.getElementById('loadingText').textContent =
-            'Step 2: Checking cache...';
+          function processStream() {
+            reader
+              .read()
+              .then(({done, value}) => {
+                if (done) {
+                  document.getElementById('loading').classList.remove('active');
+                  const totalTime = Date.now() - startTime;
+                  addToLiveStream('', '#666');
+                  addToLiveStream(
+                    `✅ Total time: ${(totalTime / 1000).toFixed(2)}s`,
+                    '#4caf50'
+                  );
+                  return;
+                }
 
-          addToLiveStream('', '#666');
-          addToLiveStream('═══════════════════════════════════════', '#666');
-          addToLiveStream('📍 STEP 2: QUERY GENERATOR', '#4fc3f7');
-          addToLiveStream('═══════════════════════════════════════', '#666');
+                buffer += decoder.decode(value, {stream: true});
 
-          const startTime2 = Date.now();
-          const queryData = await streamQueryGeneration(
-            companyUrl,
-            companyName,
-            numQueries
-          );
-          const time2 = Date.now() - startTime2;
-          currentState = {...currentState, ...queryData, queryTime: time2};
+                // Parse SSE events
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
 
-          addToLiveStream(
-            `✅ Query generation completed in ${time2}ms`,
-            '#4caf50'
-          );
-          document.getElementById('step2').classList.remove('active');
-          document.getElementById('step2').classList.add('completed');
+                for (const line of lines) {
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const jsonStr = line.slice(6).trim();
+                      if (!jsonStr) continue;
+                      const event = JSON.parse(jsonStr);
+                      handleStreamEvent(event);
+                    } catch (e) {
+                      console.error('Error parsing SSE:', e);
+                    }
+                  }
+                }
 
-          // Small delay for visual effect
-          await new Promise((resolve) => setTimeout(resolve, 500));
+                processStream();
+              })
+              .catch((error) => {
+                console.error('Stream error:', error);
+                document.getElementById('loading').classList.remove('active');
+                addToLiveStream(`❌ Stream error: ${error.message}`, '#f44336');
+              });
+          }
 
-          // Step 3: Complete
-          document.getElementById('step3').classList.add('completed');
-          document.getElementById('loadingText').textContent =
-            'Complete! Displaying results...';
-
-          await new Promise((resolve) => setTimeout(resolve, 500));
-
-          // Display results
-          displayResults(currentState);
+          processStream();
         } catch (error) {
           console.error('Error:', error);
           document.getElementById('loading').classList.remove('active');
           document.getElementById('results').style.display = 'block';
           document.getElementById('resultsContent').innerHTML = `
-                    <div class="error-box">
-                        <strong>❌ Error:</strong> ${error.message}
-                        <br><br>
-                        <small>Make sure the FastAPI server is running on http://localhost:8000</small>
-                    </div>
-                `;
+            <div class="error-box">
+              <strong>❌ Error:</strong> ${error.message}
+              <br><br>
+              <small>Make sure the FastAPI server is running on http://localhost:8000</small>
+            </div>
+          `;
         } finally {
-          document.getElementById('loading').classList.remove('active');
           document.getElementById('runBtn').disabled = false;
+        }
+      }
+
+      function handleStreamEvent(event) {
+        const {step, status, data, message} = event;
+
+        // Update loading text
+        if (message) {
+          document.getElementById('loadingText').textContent = message;
+        }
+
+        // Handle different steps
+        if (step === 'step1') {
+          if (status === 'started') {
+            document.getElementById('step1').classList.add('active');
+            addToLiveStream('', '#666');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            addToLiveStream('📍 STEP 1: INDUSTRY DETECTION', '#4fc3f7');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+          } else if (status === 'completed') {
+            addToLiveStream(`✓ Industry: ${data.industry}`, '#81c784');
+            addToLiveStream(`✓ Company: ${data.company_name}`, '#81c784');
+            addToLiveStream(
+              `✓ Competitors: ${data.competitors.length}`,
+              '#81c784'
+            );
+            document.getElementById('step1').classList.remove('active');
+            document.getElementById('step1').classList.add('completed');
+            currentState.industry = data.industry;
+            currentState.company_name = data.company_name;
+            currentState.competitors = data.competitors;
+          }
+        } else if (step === 'step2') {
+          if (status === 'started') {
+            document.getElementById('step2').classList.add('active');
+            addToLiveStream('', '#666');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            addToLiveStream('📍 STEP 2: QUERY GENERATION', '#4fc3f7');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+          } else if (status === 'completed') {
+            addToLiveStream(
+              `✓ Total Queries: ${data.total_queries}`,
+              '#81c784'
+            );
+            addToLiveStream(`✓ Categories: ${data.categories}`, '#81c784');
+            document.getElementById('step2').classList.remove('active');
+            document.getElementById('step2').classList.add('completed');
+            currentState.total_queries = data.total_queries;
+          }
+        } else if (step === 'step3') {
+          if (status === 'started') {
+            addToLiveStream('', '#666');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            addToLiveStream('📍 STEP 3: PARALLEL BATCH TESTING', '#4fc3f7');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+          }
+        } else if (step === 'batch') {
+          if (status === 'testing_started') {
+            addToLiveStream(
+              `📦 Batch ${data.batch_num}: Testing (${data.progress.toFixed(
+                0
+              )}%)`,
+              '#ffeb3b'
+            );
+          } else if (status === 'testing_completed') {
+            addToLiveStream(
+              `  ✓ Batch ${data.batch_num} testing complete (${data.responses_count} responses)`,
+              '#81c784'
+            );
+          } else if (status === 'analysis_started') {
+            addToLiveStream(
+              `  📊 Analyzing batch ${data.batch_num}...`,
+              '#ffeb3b'
+            );
+          } else if (status === 'analysis_completed') {
+            const score = data.visibility_score.toFixed(1);
+            addToLiveStream(
+              `  ✓ Batch ${data.batch_num} score: ${score}% (${data.total_mentions} mentions)`,
+              '#81c784'
+            );
+          }
+        } else if (step === 'step4') {
+          if (status === 'started') {
+            addToLiveStream('', '#666');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            addToLiveStream('📍 STEP 4: AGGREGATION', '#4fc3f7');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+          } else if (status === 'completed') {
+            addToLiveStream(
+              `✓ Final Score: ${data.visibility_score.toFixed(1)}%`,
+              '#81c784'
+            );
+            addToLiveStream(
+              `✓ Total Mentions: ${data.total_mentions}`,
+              '#81c784'
+            );
+            document.getElementById('step3').classList.add('completed');
+          }
+        } else if (step === 'complete') {
+          if (status === 'success') {
+            addToLiveStream('', '#666');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            addToLiveStream('✅ ANALYSIS COMPLETE', '#4caf50');
+            addToLiveStream('═══════════════════════════════════════', '#666');
+            currentState = data;
+            displayResults(data);
+          }
+        } else if (step === 'error') {
+          addToLiveStream(`❌ Error: ${data.error}`, '#f44336');
         }
       }
 
@@ -1104,34 +1305,39 @@
       function displayResults(state) {
         document.getElementById('results').style.display = 'block';
 
+        const report = state.analysis_report || {};
+        const byModel = report.by_model || {};
+
         const html = `
                 <div class="success-box">
-                    ✅ <strong>Integrated flow completed successfully!</strong>
-                    Both agents executed in sequence with data flowing seamlessly.
+                    ✅ <strong>Parallel analysis completed successfully!</strong>
+                    Complete workflow executed with real-time batch processing and analysis.
                 </div>
 
                 <!-- Statistics -->
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div class="stat-label">Industry</div>
-                        <div class="stat-value">${state.industry || 'N/A'}</div>
+                        <div class="stat-label">Visibility Score</div>
+                        <div class="stat-value">${(
+                          state.visibility_score || 0
+                        ).toFixed(1)}%</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Competitors Found</div>
+                        <div class="stat-label">Total Mentions</div>
                         <div class="stat-value">${
-                          state.competitors?.length || 0
+                          report.total_mentions || 0
                         }</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Queries Generated</div>
+                        <div class="stat-label">Total Queries</div>
                         <div class="stat-value">${
-                          state.queries?.length || 0
+                          state.total_queries || 0
                         }</div>
                     </div>
                     <div class="stat-card">
-                        <div class="stat-label">Query Categories</div>
+                        <div class="stat-label">Total Responses</div>
                         <div class="stat-value">${
-                          Object.keys(state.query_categories || {}).length
+                          state.total_responses || 0
                         }</div>
                     </div>
                 </div>
@@ -1155,16 +1361,6 @@
                     </div>
                     
                     <div class="result-item">
-                        <strong>Description:</strong><br>
-                        ${state.company_description || 'N/A'}
-                    </div>
-                    
-                    <div class="result-item">
-                        <strong>Summary:</strong><br>
-                        ${state.company_summary || 'N/A'}
-                    </div>
-                    
-                    <div class="result-item">
                         <strong>Competitors (${
                           state.competitors?.length || 0
                         }):</strong>
@@ -1179,112 +1375,116 @@
                     </div>
                 </div>
 
-                <!-- Step 2 Results: Query Generator -->
+                <!-- Step 2 Results: Visibility Analysis -->
                 <div class="result-box">
-                    <h3>📝 Step 2: Query Generator Results</h3>
+                    <h3>📊 Step 2: Visibility Analysis Results</h3>
                     
                     <div class="result-item">
-                        <strong>Total Queries:</strong> ${
-                          state.queries?.length || 0
+                        <strong>Overall Visibility Score:</strong> 
+                        <span style="font-size: 1.5em; color: #667eea; font-weight: bold;">
+                            ${(state.visibility_score || 0).toFixed(1)}%
+                        </span>
+                    </div>
+                    
+                    <div class="result-item">
+                        <strong>Total Queries Tested:</strong> ${
+                          state.total_queries || 0
                         }
-                        <span class="badge badge-success">Generated</span>
+                        <span class="badge badge-success">Tested</span>
                     </div>
                     
                     <div class="result-item">
-                        <strong>Data Source:</strong> 
-                        <span class="badge badge-info">From Industry Detector</span>
-                        <br><small style="margin-left: 150px;">
-                            ✓ Used industry: ${state.industry}<br>
-                            ✓ Used company name: ${state.company_name}<br>
-                            ✓ Used ${state.competitors?.length || 0} competitors
-                        </small>
+                        <strong>Total Responses:</strong> ${
+                          state.total_responses || 0
+                        }
+                        <span class="badge badge-info">Analyzed</span>
                     </div>
+                    
+                    <div class="result-item">
+                        <strong>Total Mentions:</strong> ${
+                          report.total_mentions || 0
+                        }
+                        <span class="badge badge-success">Found</span>
+                    </div>
+                </div>
 
-                    ${Object.entries(state.query_categories || {})
+                <!-- Per-Model Breakdown -->
+                <div class="result-box">
+                    <h3>🤖 Per-Model Breakdown</h3>
+                    ${Object.entries(byModel)
                       .map(
-                        ([key, category]) => `
-                        <div class="category-section">
-                            <div class="category-header">
-                                <span class="category-name">${
-                                  category.name
-                                }</span>
-                                <span class="category-count">${
-                                  category.queries.length
-                                } queries</span>
-                            </div>
-                            <div class="query-list">
-                                ${category.queries
-                                  .slice(0, 10)
-                                  .map(
-                                    (query) =>
-                                      `<div class="query-item">${query}</div>`
-                                  )
-                                  .join('')}
-                                ${
-                                  category.queries.length > 10
-                                    ? `<div class="query-item" style="opacity: 0.6;">
-                                        ... and ${
-                                          category.queries.length - 10
-                                        } more
-                                    </div>`
-                                    : ''
-                                }
-                            </div>
+                        ([model, data]) => `
+                        <div class="result-item">
+                            <strong>${model.toUpperCase()}:</strong>
+                            ${data.mentions}/${
+                          data.total_responses
+                        } mentions (${(data.mention_rate * 100).toFixed(1)}%)
+                            <span class="badge badge-info">${(
+                              data.mention_rate * 100
+                            ).toFixed(0)}%</span>
                         </div>
                     `
                       )
                       .join('')}
                 </div>
 
-                <!-- Performance Stats -->
-                <div class="result-box" style="border-left-color: #ff9800;">
-                    <h3>⚡ Performance</h3>
-                    <div class="result-item">
-                        <strong>Industry Detection:</strong> ${
-                          state.detectorTime || 0
-                        }ms
-                        ${
-                          state.detectorTime < 100
-                            ? '<span class="badge badge-success">⚡ Cached</span>'
-                            : '<span class="badge badge-info">🔄 Fresh</span>'
-                        }
-                    </div>
-                    <div class="result-item">
-                        <strong>Query Generation:</strong> ${
-                          state.queryTime || 0
-                        }ms
-                        ${
-                          state.queryTime < 100
-                            ? '<span class="badge badge-success">⚡ Cached</span>'
-                            : '<span class="badge badge-info">🔄 Fresh</span>'
-                        }
-                    </div>
-                    <div class="result-item">
-                        <strong>Total Time:</strong> ${
-                          (state.detectorTime || 0) + (state.queryTime || 0)
-                        }ms
-                    </div>
+                <!-- Batch Results -->
+                <div class="result-box">
+                    <h3>📦 Batch Processing Results</h3>
+                    ${(state.batch_results || [])
+                      .map(
+                        (batch) => `
+                        <div class="result-item">
+                            <strong>Batch ${batch.batch_num}:</strong>
+                            Score ${batch.visibility_score.toFixed(1)}% | ${
+                          batch.total_mentions
+                        } mentions
+                        </div>
+                    `
+                      )
+                      .join('')}
                 </div>
 
-                <!-- Integration Benefits -->
+                <!-- Sample Mentions -->
+                ${
+                  report.sample_mentions && report.sample_mentions.length > 0
+                    ? `
                 <div class="result-box" style="border-left-color: #4caf50;">
-                    <h3>✨ Integration Benefits</h3>
+                    <h3>💬 Sample Mentions</h3>
+                    ${report.sample_mentions
+                      .slice(0, 5)
+                      .map(
+                        (sample) => `
+                        <div class="result-item">
+                            <small>${sample}</small>
+                        </div>
+                    `
+                      )
+                      .join('')}
+                </div>
+                `
+                    : ''
+                }
+
+                <!-- Workflow Benefits -->
+                <div class="result-box" style="border-left-color: #4caf50;">
+                    <h3>✨ Parallel Processing Benefits</h3>
                     <div class="result-item">
-                        <strong>✓ Smart Caching:</strong> Instant return on cache hits (~10-50ms)
+                        <strong>✓ Batch Processing:</strong> Queries tested in parallel batches
                     </div>
                     <div class="result-item">
-                        <strong>✓ No Redundant Calls:</strong> Query Generator reuses Industry Detector data
+                        <strong>✓ Real-time Analysis:</strong> Results analyzed as batches complete
                     </div>
                     <div class="result-item">
-                        <strong>✓ Rich Context:</strong> Queries personalized with company name and competitors
+                        <strong>✓ Modular LLM:</strong> Uses ${
+                          state.llm_provider || 'Gemini'
+                        } for industry & queries
                     </div>
                     <div class="result-item">
-                        <strong>✓ Industry-Specific:</strong> Query categories matched to ${
-                          state.industry
-                        } industry
+                        <strong>✓ Multi-Model Testing:</strong> Tested against multiple AI models
                     </div>
                     <div class="result-item">
-                        <strong>✓ 24hr Cache:</strong> Both steps cached for fast subsequent requests
+                        <strong>✓ Comprehensive Analysis:</strong> Semantic + exact matching for mentions
                     </div>
                 </div>
             `;

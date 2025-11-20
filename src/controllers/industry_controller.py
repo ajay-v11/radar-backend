@@ -232,30 +232,96 @@ async def analyze_company_stream(
 
 
 def _scrape_website(url: str) -> str:
-    """Scrape website content using Firecrawl."""
+    """Scrape website content using Firecrawl with retry strategies."""
     if not settings.FIRECRAWL_API_KEY:
         print("ERROR: Firecrawl API key not configured")
         return ""
     
     try:
         from firecrawl import Firecrawl
+        import time
         
         firecrawl = Firecrawl(api_key=settings.FIRECRAWL_API_KEY)
-        result = firecrawl.scrape(
-            url=url,
-            formats=["markdown"],
-            only_main_content=True,
-            timeout=30000
-        )
         
-        # Handle both dict and object responses
-        if hasattr(result, 'markdown') and result.markdown:
-            return result.markdown[:10000]
-        elif isinstance(result, dict) and "markdown" in result:
-            return result["markdown"][:10000]
+        # Try multiple strategies for scraping
+        strategies = [
+            # Strategy 1: Standard scrape with main content only
+            {
+                "formats": ["markdown"],
+                "only_main_content": True,
+                "timeout": 30000
+            },
+            # Strategy 2: Try without only_main_content (gets more content)
+            {
+                "formats": ["markdown"],
+                "only_main_content": False,
+                "timeout": 30000
+            },
+            # Strategy 3: Try with longer timeout
+            {
+                "formats": ["markdown"],
+                "only_main_content": True,
+                "timeout": 60000
+            }
+        ]
         
-        print(f"ERROR: Firecrawl returned no markdown content")
+        last_error = None
+        for i, strategy in enumerate(strategies, 1):
+            try:
+                print(f"Attempting scrape strategy {i}/{len(strategies)} for {url}")
+                result = firecrawl.scrape(url=url, **strategy)
+                
+                # Handle both dict and object responses
+                if hasattr(result, 'markdown') and result.markdown:
+                    content = result.markdown[:10000]
+                    print(f"✅ Strategy {i} succeeded: {len(content)} characters")
+                    return content
+                elif isinstance(result, dict) and "markdown" in result:
+                    content = result["markdown"][:10000]
+                    print(f"✅ Strategy {i} succeeded: {len(content)} characters")
+                    return content
+                else:
+                    print(f"⚠️ Strategy {i} returned no markdown content")
+                    
+            except Exception as e:
+                last_error = str(e)
+                print(f"❌ Strategy {i} failed: {last_error}")
+                if i < len(strategies):
+                    time.sleep(2)  # Wait before trying next strategy
+                continue
+        
+        # All strategies failed - try fallback to main domain if this is a regional domain
+        if any(tld in url for tld in ['.co.in', '.co.uk', '.com.au', '.de', '.fr', '.jp']):
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain_parts = parsed.netloc.split('.')
+            if len(domain_parts) >= 2:
+                base_domain = domain_parts[0] if domain_parts[0] != 'www' else domain_parts[1]
+                fallback_url = f"{parsed.scheme}://{base_domain}.com{parsed.path}"
+                
+                print(f"🔄 Trying fallback domain: {fallback_url}")
+                try:
+                    result = firecrawl.scrape(
+                        url=fallback_url,
+                        formats=["markdown"],
+                        only_main_content=True,
+                        timeout=30000
+                    )
+                    
+                    if hasattr(result, 'markdown') and result.markdown:
+                        content = result.markdown[:10000]
+                        print(f"✅ Fallback succeeded: {len(content)} characters")
+                        return content
+                    elif isinstance(result, dict) and "markdown" in result:
+                        content = result["markdown"][:10000]
+                        print(f"✅ Fallback succeeded: {len(content)} characters")
+                        return content
+                except Exception as fallback_error:
+                    print(f"❌ Fallback domain also failed: {fallback_error}")
+        
+        print(f"ERROR: All scraping strategies failed. Last error: {last_error}")
         return ""
+        
     except Exception as e:
         print(f"ERROR: Firecrawl scraping failed: {str(e)}")
         return ""

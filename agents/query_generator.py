@@ -8,7 +8,6 @@ real buyer intent.
 
 import logging
 from typing import List, Dict, Generator, Tuple, Optional
-from openai import OpenAI
 from models.schemas import WorkflowState
 from config.settings import settings
 import json
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Constants for query generation configuration
 MIN_QUERIES = 20  # Minimum number of queries to generate
 MAX_QUERIES = 100  # Maximum number of queries to generate
-DEFAULT_NUM_QUERIES = 50  # Default number of queries if not specified
+DEFAULT_NUM_QUERIES = 20  # Default number of queries if not specified
 QUERY_CACHE_TTL = 86400  # 24 hours in seconds
 OPENAI_TIMEOUT = 30.0  # Timeout for OpenAI API calls in seconds
 OPENAI_TEMPERATURE = 0.8  # Temperature for query generation (higher = more creative)
@@ -319,9 +318,9 @@ INDUSTRY_CATEGORIES = {
 }
 
 
-def generate_queries(state: WorkflowState, num_queries: int = None) -> WorkflowState:
+def generate_queries(state: WorkflowState, num_queries: int = None, llm_provider: str = "openai") -> WorkflowState:
     """
-    Generates 20-100 industry-specific queries using OpenAI with weighted categories.
+    Generates 20-100 industry-specific queries using specified LLM with weighted categories.
     Caches results by company URL and num_queries.
     
     This agent expects the industry detector to have already run and populated:
@@ -332,6 +331,11 @@ def generate_queries(state: WorkflowState, num_queries: int = None) -> WorkflowS
     - competitors: List of competitor names
     
     These fields are used to generate contextual, relevant queries.
+    
+    Args:
+        state: WorkflowState with company and industry information
+        num_queries: Number of queries to generate (20-100, default 20)
+        llm_provider: LLM provider to use ("openai", "gemini", "llama", "claude")
     """
     if num_queries is None:
         num_queries = state.get("num_queries", DEFAULT_NUM_QUERIES)
@@ -397,7 +401,8 @@ def generate_queries(state: WorkflowState, num_queries: int = None) -> WorkflowS
                 company_description=company_description,
                 company_summary=company_summary,
                 competitors=competitors,
-                errors=errors
+                errors=errors,
+                llm_provider=llm_provider
             )
             
             query_categories[category_key] = {
@@ -432,6 +437,67 @@ def generate_queries(state: WorkflowState, num_queries: int = None) -> WorkflowS
     return state
 
 
+def _get_query_generation_llm(llm_provider: str = "openai"):
+    """
+    Get LLM instance for query generation based on provider.
+    
+    Args:
+        llm_provider: Provider name ("openai", "gemini", "llama", "claude")
+        
+    Returns:
+        LLM instance or None if provider not available
+    """
+    try:
+        if llm_provider.lower() == "gemini":
+            if not settings.GEMINI_API_KEY:
+                logger.warning("Gemini API key not configured, falling back to OpenAI")
+                return None
+            from langchain_google_genai import ChatGoogleGenerativeAI
+            return ChatGoogleGenerativeAI(
+                model="gemini-2.5-flash-lite",
+                google_api_key=settings.GEMINI_API_KEY,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=MAX_TOKENS_PER_CATEGORY
+            )
+        elif llm_provider.lower() == "llama":
+            if not settings.GROK_API_KEY:
+                logger.warning("Groq API key not configured, falling back to OpenAI")
+                return None
+            from langchain_groq import ChatGroq
+            return ChatGroq(
+                model="llama-3.1-8b-instant",
+                groq_api_key=settings.GROK_API_KEY,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=MAX_TOKENS_PER_CATEGORY
+            )
+        elif llm_provider.lower() == "claude":
+            if not settings.ANTHROPIC_API_KEY:
+                logger.warning("Anthropic API key not configured, falling back to OpenAI")
+                return None
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model="claude-3-haiku-20240307",
+                api_key=settings.ANTHROPIC_API_KEY,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=MAX_TOKENS_PER_CATEGORY
+            )
+        else:  # Default to OpenAI
+            if not settings.OPENAI_API_KEY:
+                logger.error("OpenAI API key not configured")
+                return None
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=settings.INDUSTRY_ANALYSIS_MODEL,
+                openai_api_key=settings.OPENAI_API_KEY,
+                temperature=OPENAI_TEMPERATURE,
+                max_tokens=MAX_TOKENS_PER_CATEGORY,
+                timeout=OPENAI_TIMEOUT
+            )
+    except Exception as e:
+        logger.error(f"Failed to initialize {llm_provider} LLM for query generation: {str(e)}")
+        return None
+
+
 def _generate_category_queries(
     category_key: str,
     category_info: Dict,
@@ -441,12 +507,14 @@ def _generate_category_queries(
     company_description: str,
     company_summary: str,
     competitors: List[str],
-    errors: List[str]
+    errors: List[str],
+    llm_provider: str = "openai"
 ) -> List[str]:
-    """Generate queries for a specific category using OpenAI."""
+    """Generate queries for a specific category using specified LLM."""
     
-    if not settings.OPENAI_API_KEY:
-        error_msg = "OpenAI API key not configured"
+    llm = _get_query_generation_llm(llm_provider)
+    if not llm:
+        error_msg = f"Could not initialize {llm_provider} LLM for query generation"
         errors.append(error_msg)
         logger.error(error_msg)
         return []
@@ -455,7 +523,6 @@ def _generate_category_queries(
         return []
     
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=OPENAI_TIMEOUT)
         
         context = f"""Industry: {industry}
 Company: {company_name}
@@ -484,30 +551,33 @@ Requirements:
 Return ONLY a JSON array of query strings:
 ["query 1", "query 2", ...]"""
 
-        response = client.chat.completions.create(
-            model=settings.INDUSTRY_ANALYSIS_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert SEO and search intent analyst. Generate realistic search queries that users would type. Always respond with valid JSON array."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=OPENAI_TEMPERATURE,
-            max_tokens=MAX_TOKENS_PER_CATEGORY,
-            timeout=OPENAI_TIMEOUT,
-            response_format={"type": "json_object"}
-        )
+        # Use LangChain's structured output for JSON
+        from langchain_core.messages import SystemMessage, HumanMessage
         
-        result_text = response.choices[0].message.content
+        messages = [
+            SystemMessage(content="You are an expert SEO and search intent analyst. Generate realistic search queries that users would type. Always respond with valid JSON array."),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        result_text = response.content
         if not result_text:
             error_msg = f"OpenAI returned empty response for {category_key}"
             errors.append(error_msg)
             logger.error(error_msg)
             return []
+        
+        # Strip markdown code blocks if present
+        if result_text.startswith("```"):
+            # Remove markdown code block wrapper
+            result_text = result_text.strip()
+            if result_text.startswith("```json"):
+                result_text = result_text[7:]  # Remove ```json
+            elif result_text.startswith("```"):
+                result_text = result_text[3:]  # Remove ```
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]  # Remove trailing ```
+            result_text = result_text.strip()
         
         try:
             result = json.loads(result_text)
@@ -574,7 +644,7 @@ Return ONLY a JSON array of query strings:
         return []
 
 
-def generate_queries_stream(state: WorkflowState, num_queries: int = None) -> Generator[Tuple[str, str, List[str]], None, WorkflowState]:
+def generate_queries_stream(state: WorkflowState, num_queries: int = None, llm_provider: str = "openai") -> Generator[Tuple[str, str, List[str]], None, WorkflowState]:
     """Generator version that yields queries as they're generated for streaming."""
     
     if num_queries is None:
@@ -620,7 +690,8 @@ def generate_queries_stream(state: WorkflowState, num_queries: int = None) -> Ge
                 company_description=company_description,
                 company_summary=company_summary,
                 competitors=competitors,
-                errors=errors
+                errors=errors,
+                llm_provider=llm_provider
             )
             
             query_categories[category_key] = {
