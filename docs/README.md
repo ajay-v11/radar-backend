@@ -1,332 +1,417 @@
 # AI Visibility Scoring System - Documentation
 
+## Overview
+
+The AI Visibility Scoring System analyzes how frequently companies are mentioned by AI models when users search for industry-related queries. The system uses a two-phase workflow with intelligent multi-level caching to provide fast, accurate visibility scores.
+
 ## Quick Start
 
-1. **Start services**: `docker-compose up -d`
+### 1. Start Services
 
-   - ChromaDB on port 8001
-   - Redis on port 6379
+```bash
+docker-compose up -d
+```
 
-2. **Run server**: `python run_server.py` or `uvicorn main:app --reload`
+This starts:
 
-   - Databases initialize automatically on startup
-   - Check logs for connection status:
-     - ✅ ChromaDB: Connected
-     - ✅ Redis: Connected
-     - ✅ RAGStore initialized with 6 industry templates
+- **ChromaDB** on port 8001 (vector database)
+- **Redis** on port 6379 (cache)
 
-3. **API docs**: http://localhost:8000/docs
+### 2. Configure Environment
 
-**Optional**: Test database connections manually with `python scripts/init_databases.py`
+Copy `.env.example` to `.env` and add your API keys:
 
-### Startup Process
+```bash
+# Required
+OPENAI_API_KEY=sk-...
+FIRECRAWL_API_KEY=...
 
-The server automatically:
+# Optional (for additional AI models)
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GROK_API_KEY=...
+OPEN_ROUTER_API_KEY=...
+```
 
-1. Initializes RAG Store with query templates
-2. Tests ChromaDB connection and creates collections
-3. Tests Redis connection
-4. Logs status of all services
-5. Continues even if databases are unavailable (with warnings)
+### 3. Run Server
+
+```bash
+python run_server.py
+```
+
+Or with auto-reload:
+
+```bash
+uvicorn src.app:app --reload
+```
+
+### 4. Access API
+
+- **API Docs**: http://localhost:8000/docs
+- **Health Check**: http://localhost:8000/health
+
+## Documentation Structure
+
+### Core Documentation
+
+| Document                               | Description                                                 |
+| -------------------------------------- | ----------------------------------------------------------- |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)   | High-level system architecture, data flow, technology stack |
+| [ORCHESTRATION.md](./ORCHESTRATION.md) | Workflow orchestration, agent coordination, flow diagrams   |
+| [API_ENDPOINTS.md](./API_ENDPOINTS.md) | Complete API reference with examples                        |
+
+### Agent Documentation
+
+| Agent   | Document                                                   | Purpose                                                      |
+| ------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
+| Agent 1 | [AGENT_INDUSTRY_DETECTOR.md](./AGENT_INDUSTRY_DETECTOR.md) | Web scraping, industry classification, competitor extraction |
+| Agent 2 | [AGENT_QUERY_GENERATOR.md](./AGENT_QUERY_GENERATOR.md)     | Industry-specific query generation with LLM                  |
+| Agent 3 | [AGENT_AI_MODEL_TESTER.md](./AGENT_AI_MODEL_TESTER.md)     | Testing queries across multiple AI models                    |
+| Agent 4 | [AGENT_SCORER_ANALYZER.md](./AGENT_SCORER_ANALYZER.md)     | Hybrid mention detection and visibility scoring              |
 
 ## System Architecture
 
-Four agents work sequentially to analyze company visibility:
+### Two-Phase Workflow
 
 ```
-Input → Industry Detector → Query Generator → AI Model Tester → Scorer Analyzer → Output
+Phase 1: Company Analysis
+    └─> Industry Detector Agent
+        └─> Output: Company profile with competitors
+
+Phase 2: Complete Visibility Flow
+    ├─> Industry Detector (reuses Phase 1 cache)
+    ├─> Query Generator
+    ├─> AI Model Tester (parallel batches)
+    └─> Scorer Analyzer
+        └─> Output: Visibility score + detailed report
 ```
 
-### Workflow State
+### Key Features
 
-The workflow state is passed between agents and accumulates data:
-
-```python
-{
-    # Input (provided by user)
-    "company_url": str,
-    "company_name": str,          # Optional
-    "company_description": str,   # Optional
-    "models": List[str],          # Optional, defaults to ["chatgpt", "gemini"]
-
-    # Added by Industry Detector
-    "industry": str,              # Detected category
-    "company_summary": str,       # AI-generated summary
-    "scraped_content": str,       # Raw website content
-    "competitors": List[str],     # Competitor names
-    "competitors_data": List[Dict],  # Rich competitor metadata
-
-    # Added by Query Generator
-    "queries": List[str],         # 20 generated queries
-
-    # Added by AI Model Tester
-    "model_responses": Dict[str, List[str]],  # {model: [responses]}
-
-    # Added by Scorer Analyzer
-    "visibility_score": float,    # 0-100 score
-    "analysis_report": Dict,      # Detailed results with competitor mentions
-
-    # Error tracking (all agents)
-    "errors": List[str]           # Non-blocking errors
-}
-```
-
-## Agents
-
-### 1. Industry Detector (`agents/industry_detector.py`)
-
-**Purpose**: Classifies companies into industries using Firecrawl scraping + OpenAI GPT-4o-mini analysis
-
-**Industries**: technology, retail, healthcare, finance, food_services, other
-
-**Process**:
-
-1. Scrapes company website with Firecrawl (markdown format)
-2. Analyzes content with OpenAI to extract:
-   - Company name, description, and summary
-   - Industry classification
-   - 3-5 main competitors with rich metadata (description, products, positioning)
-3. Stores in ChromaDB with embeddings for semantic search
-
-**Features**:
-
-- Redis caching (24hr TTL) - 90% faster on repeated URLs
-- Retry logic (2 attempts for scraping and AI analysis)
-- Stores company + competitors in ChromaDB with rich embeddings
-- Token-optimized (5k chars vs 10k)
-- Fallback to keyword matching if AI analysis fails
-
-### 2. Query Generator (`agents/query_generator.py`)
-
-**Purpose**: Generates 20 industry-specific queries from RAG templates
-
-**Process**:
-
-1. Fetch templates from RAG Store by industry
-2. Randomly sample 20 unique templates
-3. 30% chance to customize with company name for comparison queries
-
-### 3. AI Model Tester (`agents/ai_model_tester.py`)
-
-**Purpose**: Executes queries against AI models
-
-**Supported Models** (cost-optimized):
-
-- ChatGPT (gpt-3.5-turbo)
-- Claude (claude-3-haiku)
-- Gemini (gemini-2.5-flash-lite)
-- Llama (llama-3.1-8b-instant via Groq - FREE)
-- Mistral (mistral-7b-instruct via OpenRouter)
-- Qwen (qwen-2-7b-instruct via OpenRouter)
-
-**Features**:
-
-- Redis caching for responses (1hr TTL)
-- Retry logic (2 attempts per query)
-- Rate limiting (60 calls/min per model)
-- Graceful error handling
-- 70% cost reduction with caching
-
-### 4. Scorer Analyzer (`agents/scorer_analyzer.py`)
-
-**Purpose**: Calculates visibility score and generates report
-
-**Scoring**: `(total_mentions / (queries × models)) × 100`
-
-**Mention Detection** (Hybrid Approach):
-
-1. **Exact String Matching**: Fast, high-precision company name search
-2. **Semantic Matching**: RAG-based competitor detection using ChromaDB
-   - Catches variations: "meal kit service" → HelloFresh
-   - Similarity threshold: 0.70
-   - Rich embeddings: name + description + products + positioning
-
-**Features**:
-
-- Hybrid exact + semantic matching for best accuracy
-- Competitor mention tracking per model
-- Per-model breakdown with competitor context
-- Sample mentions with query and competitor info
-- Graceful fallback if semantic search unavailable
-
-## Databases
-
-### ChromaDB (Vector Store)
-
-- **Port**: 8001
-- **Collections**: companies, competitors
-- **Usage**: Semantic competitor matching, company embeddings
-
-### Redis (Cache)
-
-- **Port**: 6379
-- **Usage**: Scrape cache (24hr), model responses (1hr), rate limiting
-
-## Configuration
-
-### Environment Variables (`.env`)
-
-```bash
-# AI Models (at least OPENAI_API_KEY required)
-OPENAI_API_KEY=sk-...           # Required for industry analysis
-ANTHROPIC_API_KEY=sk-ant-...    # Optional
-GEMINI_API_KEY=...              # Optional
-GROK_API_KEY=gsk_...            # Optional (Groq - FREE)
-OPEN_ROUTER_API_KEY=sk-or-...   # Optional
-
-# Firecrawl (required for web scraping)
-FIRECRAWL_API_KEY=...
-
-# Databases (auto-initialized on startup)
-CHROMA_HOST=localhost
-CHROMA_PORT=8001
-REDIS_HOST=localhost
-REDIS_PORT=6379
-```
+- **Multi-Level Caching**: 4 cache layers (industry, queries, responses, complete flow)
+- **Smart Caching**: Granular cache keys for optimal reuse
+- **Hybrid Matching**: Exact + semantic mention detection
+- **Parallel Processing**: Batch testing for efficiency
+- **Streaming Updates**: Real-time progress via SSE
 
 ## API Usage
 
-### Analyze Company
+### Phase 1: Analyze Company
 
 ```bash
-curl -X POST http://localhost:8000/analyze \
+curl -X POST http://localhost:8000/analyze/company \
   -H "Content-Type: application/json" \
   -d '{
     "company_url": "https://hellofresh.com",
-    "company_name": "HelloFresh",
-    "company_description": "Meal kit delivery service",
-    "models": ["chatgpt", "gemini"]
+    "company_name": "HelloFresh"
   }'
 ```
 
-### Response Format
+**Response (cached)**:
 
 ```json
 {
-  "job_id": "uuid",
-  "status": "completed",
-  "industry": "food_services",
-  "visibility_score": 75.5,
-  "total_queries": 20,
-  "total_mentions": 30,
-  "model_results": {
-    "chatgpt": {
-      "mentions": 16,
-      "mention_rate": 0.8,
-      "sample_mentions": ["Query: '...' → mentioned"]
-    }
+  "cached": true,
+  "data": {
+    "industry": "food_services",
+    "company_name": "HelloFresh",
+    "competitors": ["Blue Apron", "Home Chef", "Sun Basket"],
+    "company_description": "...",
+    "company_summary": "..."
   }
 }
 ```
 
+### Phase 2: Complete Visibility Analysis
+
+```bash
+curl -X POST http://localhost:8000/analyze/visibility \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company_url": "https://hellofresh.com",
+    "num_queries": 20,
+    "models": ["chatgpt", "gemini"],
+    "llm_provider": "gemini",
+    "batch_size": 5
+  }'
+```
+
+**Response**: Server-Sent Events stream with real-time progress
+
 ## Performance
 
-### Without Caching
+### Latency
 
-- 20 queries × 2 models = 40 API calls
-- ~30-60 seconds per analysis
+| Scenario      | Phase 1 | Phase 2 | Total    |
+| ------------- | ------- | ------- | -------- |
+| Cold cache    | 5-10s   | 30-60s  | 35-70s   |
+| Warm cache    | 10-50ms | 10-50ms | 20-100ms |
+| Partial cache | 2-3s    | 15-40s  | 17-43s   |
 
-### With Caching
+### Cost Optimization
 
-- First run: 40 API calls
-- Subsequent: ~12 API calls (70% cache hit)
-- ~10-20 seconds per analysis
-- 70% cost reduction
+- **Without caching**: ~$0.10-0.50 per analysis
+- **With caching**: ~$0.03-0.15 per analysis (70% savings)
 
-## Competitor Matching
+## Technology Stack
 
-Uses semantic embeddings (ChromaDB + OpenAI) with similarity threshold: 0.70 to catch variations:
+- **Backend**: FastAPI (Python 3.11+)
+- **LLMs**: OpenAI (gpt-4-mini), Gemini, Claude, Llama
+- **Vector DB**: ChromaDB (semantic search)
+- **Cache**: Redis (multi-level caching)
+- **Web Scraping**: Firecrawl (markdown extraction)
+- **Embeddings**: OpenAI text-embedding-ada-002
 
-- "German sportswear brand" → Adidas
-- "premium meal kits" → Blue Apron
-- "budget delivery" → EveryPlate
-- "meal kit service" → HelloFresh
+## Supported AI Models
 
-**Rich embeddings** include: name, description, products, positioning
+| Model    | Provider   | Cost     | Notes                 |
+| -------- | ---------- | -------- | --------------------- |
+| ChatGPT  | OpenAI     | Low      | gpt-3.5-turbo         |
+| Gemini   | Google     | Very Low | gemini-2.5-flash-lite |
+| Claude   | Anthropic  | Low      | claude-3-haiku        |
+| Llama    | Groq       | Free     | llama-3.1-8b-instant  |
+| Grok     | OpenRouter | Low      | grok-4.1-fast         |
+| DeepSeek | OpenRouter | Free     | deepseek-chat-v3      |
 
-**How it works**:
+## Supported Industries
 
-1. Industry Detector extracts competitors from website analysis
-2. Competitors stored in ChromaDB with rich metadata embeddings
-3. Scorer Analyzer uses semantic search to detect mentions in AI responses
-4. Tracks which competitors appear alongside company in responses
+1. **technology**: Software, SaaS, AI, cloud, apps, IT services
+2. **retail**: E-commerce, stores, fashion, consumer goods
+3. **healthcare**: Medical services, pharmaceuticals, biotech
+4. **finance**: Banking, fintech, payments, insurance
+5. **food_services**: Restaurants, meal delivery, catering
+6. **other**: Default fallback category
+
+## Caching Strategy
+
+### Cache Layers
+
+| Layer             | Key                          | TTL  | Purpose                  |
+| ----------------- | ---------------------------- | ---- | ------------------------ |
+| Industry Analysis | `company_url`                | 24hr | Complete company profile |
+| Queries           | `url+industry+count`         | 24hr | Generated queries        |
+| Model Responses   | `query+model`                | 1hr  | Individual AI responses  |
+| Complete Flow     | `url+queries+models+weights` | 24hr | Final aggregated results |
+
+### Cache Behavior
+
+**Same everything** → Instant cached results (~10-50ms)
+**Only models changed** → Reuses queries, re-runs tests
+**Only num_queries changed** → Reuses industry, regenerates queries
+**Query weights changed** → Re-runs everything (future feature)
+
+## Database Setup
+
+### ChromaDB (Vector Store)
+
+```bash
+# Runs on port 8001
+docker-compose up chromadb -d
+
+# Test connection
+curl http://localhost:8001/api/v1/heartbeat
+```
+
+**Collections**:
+
+- `companies`: Company profiles with embeddings
+- `competitors`: Competitor data with rich metadata
+
+### Redis (Cache)
+
+```bash
+# Runs on port 6379
+docker-compose up redis -d
+
+# Test connection
+redis-cli ping  # Should return PONG
+```
 
 ## Testing
 
+### Run All Tests
+
 ```bash
-# Unit tests
-python -m pytest tests/
+pytest tests/ -v
+```
 
-# Integration test
-python test_complete_integration.py
+### Test Individual Agents
 
-# RAG competitor matching
-python test_rag_competitor_matching.py
+```bash
+pytest tests/agents/test_industry_detector.py -v
+pytest tests/agents/test_query_generator.py -v
+pytest tests/agents/test_ai_model_tester.py -v
+pytest tests/agents/test_scorer_analyzer.py -v
+```
+
+### Integration Tests
+
+```bash
+pytest tests/integration/ -v
 ```
 
 ## Troubleshooting
 
-**ChromaDB not connecting?**
+### ChromaDB Not Connecting
 
 ```bash
 docker-compose logs chromadb
 curl http://localhost:8001/api/v1/heartbeat
 ```
 
-**Redis not connecting?**
+### Redis Not Connecting
 
 ```bash
-redis-cli ping  # Should return PONG
+docker-compose logs redis
+redis-cli ping
 ```
 
-**Low visibility score?**
+### Low Visibility Score
 
 - Check generated queries are relevant
 - Verify API keys are valid
 - Review error logs for API failures
+- Ensure company name is correct
 
-**Industry detected as "other"?**
+### Industry Detected as "other"
 
 - Check Firecrawl API key is configured
-- Verify website is accessible and has content
-- Check logs for scraping errors
-- System falls back to keyword matching if scraping fails
+- Verify website is accessible
+- Provide company_description to skip scraping
+- Review scraped content in logs
 
----
+## Configuration
 
-## System Features Summary
+### Environment Variables
 
-### Performance Optimizations
+```bash
+# AI Models
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GROK_API_KEY=...
+OPEN_ROUTER_API_KEY=...
 
-- **Redis Caching**: 70% cost reduction on model responses (1hr TTL)
-- **Scrape Caching**: 90% faster on repeated URLs (24hr TTL)
-- **Rate Limiting**: 60 calls/min per model to avoid throttling
-- **Token Optimization**: 5k char limit on scraped content
+# Web Scraping
+FIRECRAWL_API_KEY=...
 
-### Accuracy Improvements
+# Databases
+CHROMA_HOST=localhost
+CHROMA_PORT=8001
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
 
-- **Hybrid Mention Detection**: Exact + semantic matching
-- **Rich Embeddings**: Competitors stored with description, products, positioning
-- **Semantic Search**: Catches variations like "meal kit service" → HelloFresh
-- **Competitor Tracking**: Monitors which competitors appear in responses
+### Settings
 
-### Reliability Features
+Edit `config/settings.py` to customize:
 
-- **Automatic Retry**: 2 attempts for scraping and API calls
-- **Graceful Degradation**: Falls back to keyword matching if AI fails
-- **Non-Blocking Errors**: Workflow continues even with partial failures
-- **Auto-Initialization**: Databases initialize on server startup
+```python
+# Model selection
+INDUSTRY_ANALYSIS_MODEL = "gpt-4-mini"
+CHATGPT_MODEL = "gpt-3.5-turbo"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
-### Cost Efficiency
+# Query generation
+MIN_QUERIES = 20
+MAX_QUERIES = 100
+DEFAULT_NUM_QUERIES = 20
 
-- **Optimized Models**: gpt-3.5-turbo, claude-haiku, gemini-flash-lite
-- **Free Options**: Llama via Groq (free tier)
-- **Caching Strategy**: Reduces API calls by 70%
-- **Token Limits**: 500 tokens per response
+# Caching
+QUERY_CACHE_TTL = 86400  # 24 hours
+SCRAPE_CACHE_TTL = 86400  # 24 hours
+```
 
-### Extensibility
+## Monitoring
 
-- **Modular Agents**: Easy to add new agents or modify existing ones
-- **Pluggable Models**: Simple to add new AI models
-- **Industry Templates**: 25+ queries per industry, easy to extend
-- **Vector Store**: Ready for advanced semantic features
+### Health Check
+
+```bash
+curl http://localhost:8000/health
+```
+
+### Logs
+
+Check logs for cache performance:
+
+```
+[INFO] Cache HIT for industry analysis: https://...
+[INFO] Cache HIT for queries: https://... (20 queries)
+[INFO] Cache MISS for complete flow: https://...
+```
+
+### Metrics
+
+Track in production:
+
+- Cache hit rates (should be >70%)
+- API latency per agent
+- Error rates per model
+- Cost per request
+
+## Development
+
+### Project Structure
+
+```
+.
+├── agents/                    # Agent implementations
+│   ├── industry_detector.py
+│   ├── query_generator.py
+│   ├── ai_model_tester.py
+│   └── scorer_analyzer.py
+├── src/
+│   ├── app.py                # FastAPI application
+│   └── routes/
+│       ├── health_routes.py
+│       └── analysis_routes.py
+├── config/
+│   ├── settings.py           # Configuration
+│   └── database.py           # Database connections
+├── utils/                    # Utilities
+│   ├── competitor_matcher.py
+│   └── vector_store.py
+├── storage/
+│   └── rag_store.py          # Query templates
+├── models/
+│   └── schemas.py            # Data models
+├── tests/                    # Test suite
+└── docs/                     # Documentation
+```
+
+### Adding a New AI Model
+
+1. Add API key to `.env`
+2. Add model config to `config/settings.py`
+3. Implement query function in `agents/ai_model_tester.py`
+4. Update model list in documentation
+
+### Adding a New Industry
+
+1. Add industry to `VALID_INDUSTRIES` in `agents/industry_detector.py`
+2. Add keywords to `INDUSTRY_KEYWORDS`
+3. Add categories to `INDUSTRY_CATEGORIES` in `agents/query_generator.py`
+4. Update documentation
+
+## Support
+
+### Common Issues
+
+- [Troubleshooting Guide](./ARCHITECTURE.md#error-handling)
+- [Agent-Specific Issues](./AGENT_INDUSTRY_DETECTOR.md#common-issues)
+- [API Errors](./API_ENDPOINTS.md#error-handling)
+
+### Documentation
+
+- [Architecture Overview](./ARCHITECTURE.md)
+- [Workflow Orchestration](./ORCHESTRATION.md)
+- [API Reference](./API_ENDPOINTS.md)
+- [Agent Details](./AGENT_INDUSTRY_DETECTOR.md)
+
+## License
+
+[Your License Here]
+
+## Contributing
+
+[Your Contributing Guidelines Here]

@@ -332,12 +332,20 @@ def _analyze_with_ai(
     company_url: str,
     provided_name: str
 ) -> Optional[Dict]:
-    """Analyze scraped content using OpenAI."""
-    if not settings.OPENAI_API_KEY:
+    """Analyze scraped content using Llama (via Groq)."""
+    if not settings.GROK_API_KEY:
+        print("❌ Groq API key not configured")
         return None
     
     try:
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        from langchain_groq import ChatGroq
+        
+        llm = ChatGroq(
+            model="llama-3.1-8b-instant",
+            groq_api_key=settings.GROK_API_KEY,
+            temperature=0.3,
+            max_tokens=1000
+        )
         
         prompt = f"""Analyze the following website content and extract key information about the company.
 
@@ -364,28 +372,34 @@ Industry Classification Guidelines:
 - food_services: Restaurants, meal delivery, catering, food tech, meal kits
 - other: Anything that doesn't clearly fit the above categories
 
-Be accurate and specific. For competitors, list actual company names that compete in the same space."""
+Be accurate and specific. For competitors, list actual company names that compete in the same space.
 
-        response = client.chat.completions.create(
-            model=settings.INDUSTRY_ANALYSIS_MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are an expert business analyst specializing in company classification and competitive analysis. Always respond with valid JSON."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,
-            max_tokens=1000,
-            response_format={"type": "json_object"}
-        )
+IMPORTANT: Respond ONLY with valid JSON. Do not include any markdown formatting or code blocks."""
+
+        from langchain_core.messages import SystemMessage, HumanMessage
         
-        result_text = response.choices[0].message.content
+        messages = [
+            SystemMessage(content="You are an expert business analyst specializing in company classification and competitive analysis. Always respond with valid JSON only, no markdown formatting."),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = llm.invoke(messages)
+        result_text = response.content
+        
         if not result_text:
+            print("❌ Empty response from Llama")
             return None
+        
+        # Strip markdown code blocks if present
+        result_text = result_text.strip()
+        if result_text.startswith("```"):
+            if result_text.startswith("```json"):
+                result_text = result_text[7:]
+            elif result_text.startswith("```"):
+                result_text = result_text[3:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+            result_text = result_text.strip()
         
         analysis = json.loads(result_text)
         
@@ -394,9 +408,13 @@ Be accurate and specific. For competitors, list actual company names that compet
         if analysis.get("industry") not in valid_industries:
             analysis["industry"] = "other"
         
+        print(f"✅ Llama analysis successful: {analysis.get('company_name')} - {analysis.get('industry')}")
         return analysis
         
-    except Exception:
+    except Exception as e:
+        print(f"❌ Llama analysis error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 

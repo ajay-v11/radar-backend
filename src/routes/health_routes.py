@@ -35,9 +35,14 @@ async def root():
     return {
         "name": "AI Visibility Scoring System",
         "version": settings.APP_VERSION,
+        "description": "Two-phase analysis workflow for company visibility scoring",
         "endpoints": {
             "health": "/health",
-            "industry_analysis": "/industry/analyze",
-            "visibility_analysis": "/visibility/analyze"
+            "phase_1_company_analysis": "/analyze/company",
+            "phase_2_complete_flow": "/analyze/complete-flow"
+        },
+        "workflow": {
+            "step_1": "POST /analyze/company - Analyze company, detect industry, identify competitors",
+            "step_2": "POST /analyze/complete-flow - Generate queries, test AI models, calculate visibility score"
         }
     }

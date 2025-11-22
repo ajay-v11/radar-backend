@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     
     # Model Settings - Cost-effective models
     CHATGPT_MODEL: str = "gpt-3.5-turbo"
-    INDUSTRY_ANALYSIS_MODEL: str = "gpt-4o-mini"  # For industry detection and analysis
+    INDUSTRY_ANALYSIS_MODEL: str = "gpt-40-mini"  # For industry detection and analysis
     CLAUDE_MODEL: str = "claude-3-haiku-20240307"  # Cheaper than Sonnet
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"  # Cost-effective Gemini
     GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Llama 3.1 8B via Groq (fastest)

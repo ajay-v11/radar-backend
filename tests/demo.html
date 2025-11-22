@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Visibility Scoring System - Demo</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #f5f5f5;
+        padding: 20px;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+
+      h1 {
+        color: #333;
+        margin-bottom: 10px;
+      }
+      .subtitle {
+        color: #666;
+        margin-bottom: 30px;
+      }
+
+      .phase {
+        margin-bottom: 40px;
+        padding: 20px;
+        background: #f9f9f9;
+        border-radius: 6px;
+        border-left: 4px solid #4caf50;
+      }
+
+      .phase h2 {
+        color: #333;
+        margin-bottom: 15px;
+      }
+
+      .form-group {
+        margin-bottom: 15px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 5px;
+        color: #555;
+        font-weight: 500;
+      }
+
+      input,
+      select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+
+      button {
+        background: #4caf50;
+        color: white;
+        padding: 12px 24px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 16px;
+        margin-right: 10px;
+      }
+
+      button:hover {
+        background: #45a049;
+      }
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+
+      .status {
+        margin-top: 20px;
+        padding: 15px;
+        border-radius: 4px;
+        font-weight: 500;
+      }
+
+      .status.info {
+        background: #e3f2fd;
+        color: #1976d2;
+        border-left: 4px solid #1976d2;
+      }
+      .status.success {
+        background: #e8f5e9;
+        color: #388e3c;
+        border-left: 4px solid #388e3c;
+      }
+      .status.error {
+        background: #ffebee;
+        color: #c62828;
+        border-left: 4px solid #c62828;
+      }
+      .status.cached {
+        background: #fff3e0;
+        color: #f57c00;
+        border-left: 4px solid #f57c00;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 15px;
+      }
+
+      .metric {
+        background: white;
+        padding: 12px;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+      }
+
+      .metric-label {
+        font-size: 12px;
+        color: #666;
+        margin-bottom: 5px;
+      }
+
+      .metric-value {
+        font-size: 18px;
+        font-weight: bold;
+        color: #333;
+      }
+
+      .data-card {
+        background: white;
+        padding: 15px;
+        border-radius: 4px;
+        margin-top: 15px;
+        border: 1px solid #ddd;
+      }
+
+      .data-card h3 {
+        color: #333;
+        margin-bottom: 10px;
+        font-size: 16px;
+      }
+
+      .data-row {
+        display: flex;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
+      }
+
+      .data-row:last-child {
+        border-bottom: none;
+      }
+
+      .data-label {
+        font-weight: 600;
+        color: #555;
+        width: 200px;
+        flex-shrink: 0;
+      }
+
+      .data-value {
+        color: #333;
+        flex: 1;
+        word-break: break-word;
+      }
+
+      .competitors-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 5px;
+      }
+
+      .competitor-tag {
+        background: #e3f2fd;
+        color: #1976d2;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 13px;
+      }
+
+      .score-display {
+        font-size: 64px;
+        font-weight: bold;
+        color: #4caf50;
+        text-align: center;
+        margin: 20px 0;
+      }
+
+      .json-toggle {
+        background: #2196f3;
+        color: white;
+        padding: 8px 16px;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        margin-top: 10px;
+      }
+
+      .json-toggle:hover {
+        background: #1976d2;
+      }
+
+      .json-box {
+        margin-top: 10px;
+        padding: 15px;
+        background: #f5f5f5;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+        max-height: 400px;
+        overflow-y: auto;
+        display: none;
+      }
+
+      .json-box.show {
+        display: block;
+      }
+
+      .json-box pre {
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        font-size: 12px;
+        line-height: 1.6;
+        color: #333;
+        font-family: 'Courier New', monospace;
+      }
+
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>🎯 AI Visibility Scoring System</h1>
+      <p class="subtitle">Two-Phase Analysis Demo</p>
+
+      <!-- Phase 1 -->
+      <div class="phase">
+        <h2>Phase 1: Company Analysis</h2>
+        <p style="color: #666; margin-bottom: 15px">
+          Scrape website, detect industry, identify competitors
+        </p>
+
+        <div class="form-group">
+          <label for="companyUrl">Company URL *</label>
+          <input
+            type="url"
+            id="companyUrl"
+            placeholder="https://example.com"
+            value="https://hellofresh.com" />
+        </div>
+
+        <div class="form-group">
+          <label for="companyName">Company Name (optional)</label>
+          <input type="text" id="companyName" placeholder="Company Name" />
+        </div>
+
+        <button id="analyzeCompanyBtn" onclick="analyzeCompany()">
+          🔍 Analyze Company
+        </button>
+        <button onclick="clearPhase1()">Clear</button>
+
+        <div id="phase1Status" class="hidden"></div>
+        <div id="phase1Metrics" class="hidden"></div>
+        <div id="phase1Data" class="hidden"></div>
+        <button
+          id="phase1JsonToggle"
+          class="json-toggle hidden"
+          onclick="toggleJson('phase1Json')">
+          Show Full JSON
+        </button>
+        <div id="phase1Json" class="json-box"></div>
+      </div>
+
+      <!-- Phase 2 -->
+      <div class="phase" style="border-left-color: #2196f3">
+        <h2>Phase 2: Visibility Analysis</h2>
+        <p style="color: #666; margin-bottom: 15px">
+          Generate queries, test AI models, calculate visibility score
+        </p>
+
+        <div class="form-group">
+          <label for="numQueries">Number of Queries</label>
+          <input type="number" id="numQueries" value="20" min="20" max="100" />
+        </div>
+
+        <div class="form-group">
+          <label for="models">AI Models (comma-separated)</label>
+          <input
+            type="text"
+            id="models"
+            value="llama,gemini"
+            placeholder="chatgpt,gemini,claude" />
+        </div>
+
+        <div class="form-group">
+          <label for="llmProvider">LLM Provider</label>
+          <select id="llmProvider">
+            <option value="llama">Llama (Groq - FREE)</option>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+          </select>
+        </div>
+
+        <button
+          id="analyzeVisibilityBtn"
+          onclick="analyzeVisibility()"
+          disabled>
+          📊 Analyze Visibility
+        </button>
+        <button onclick="clearPhase2()">Clear</button>
+
+        <div id="phase2Status" class="hidden"></div>
+        <div id="phase2Metrics" class="hidden"></div>
+        <div id="visibilityScore" class="hidden"></div>
+        <div id="phase2Data" class="hidden"></div>
+        <button
+          id="phase2JsonToggle"
+          class="json-toggle hidden"
+          onclick="toggleJson('phase2Json')">
+          Show Full JSON
+        </button>
+        <div id="phase2Json" class="json-box"></div>
+      </div>
+    </div>
+
+    <script>
+      const API_BASE = 'http://localhost:8000';
+      let phase1Data = null;
+
+      function toggleJson(id) {
+        const el = document.getElementById(id);
+        el.classList.toggle('show');
+        const btn = document.getElementById(id.replace('Json', 'JsonToggle'));
+        btn.textContent = el.classList.contains('show')
+          ? 'Hide Full JSON'
+          : 'Show Full JSON';
+      }
+
+      async function analyzeCompany() {
+        const companyUrl = document.getElementById('companyUrl').value;
+        const companyName = document.getElementById('companyName').value;
+
+        if (!companyUrl) {
+          alert('Please enter a company URL');
+          return;
+        }
+
+        const btn = document.getElementById('analyzeCompanyBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Analyzing...';
+
+        clearPhase1();
+        showStatus('phase1Status', 'info', '🔄 Starting company analysis...');
+
+        const startTime = Date.now();
+
+        try {
+          const response = await fetch(`${API_BASE}/analyze/company`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              company_url: companyUrl,
+              company_name: companyName || undefined,
+            }),
+          });
+
+          const contentType = response.headers.get('content-type');
+
+          if (contentType.includes('application/json')) {
+            const result = await response.json();
+            const duration = Date.now() - startTime;
+            phase1Data = result.data;
+
+            showStatus(
+              'phase1Status',
+              'cached',
+              '⚡ Cache HIT - Instant response!'
+            );
+            showMetrics('phase1Metrics', {
+              'Response Time': `${duration}ms`,
+              'Cache Status': 'HIT',
+            });
+            showPhase1Data(result.data);
+            showJson('phase1Json', result.data);
+            document
+              .getElementById('phase1JsonToggle')
+              .classList.remove('hidden');
+            document.getElementById('analyzeVisibilityBtn').disabled = false;
+          } else {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+              const {done, value} = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, {stream: true});
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const event = JSON.parse(line.slice(6));
+
+                  if (event.step === 'complete' && event.status === 'success') {
+                    const duration = Date.now() - startTime;
+                    phase1Data = event.data;
+
+                    showStatus(
+                      'phase1Status',
+                      'success',
+                      '✅ Analysis complete!'
+                    );
+                    showMetrics('phase1Metrics', {
+                      'Response Time': `${duration}ms`,
+                      'Cache Status': 'MISS',
+                    });
+                    showPhase1Data(event.data);
+                    showJson('phase1Json', event.data);
+                    document
+                      .getElementById('phase1JsonToggle')
+                      .classList.remove('hidden');
+                    document.getElementById(
+                      'analyzeVisibilityBtn'
+                    ).disabled = false;
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          showStatus('phase1Status', 'error', `❌ Error: ${error.message}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '🔍 Analyze Company';
+        }
+      }
+
+      async function analyzeVisibility() {
+        const companyUrl = document.getElementById('companyUrl').value;
+        const numQueries = parseInt(
+          document.getElementById('numQueries').value
+        );
+        const modelsStr = document.getElementById('models').value;
+        const llmProvider = document.getElementById('llmProvider').value;
+        const models = modelsStr
+          .split(',')
+          .map((m) => m.trim())
+          .filter((m) => m);
+
+        if (!phase1Data) {
+          alert('Please run Phase 1 first');
+          return;
+        }
+
+        const btn = document.getElementById('analyzeVisibilityBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳ Analyzing...';
+
+        clearPhase2();
+        showStatus(
+          'phase2Status',
+          'info',
+          '🔄 Starting visibility analysis...'
+        );
+
+        const startTime = Date.now();
+
+        try {
+          const response = await fetch(`${API_BASE}/analyze/visibility`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+              company_url: companyUrl,
+              num_queries: numQueries,
+              models: models,
+              llm_provider: llmProvider,
+              batch_size: 5,
+            }),
+          });
+
+          const contentType = response.headers.get('content-type');
+
+          if (contentType.includes('application/json')) {
+            const result = await response.json();
+            const duration = Date.now() - startTime;
+
+            showStatus(
+              'phase2Status',
+              'cached',
+              '⚡ Cache HIT - Instant response!'
+            );
+            showMetrics('phase2Metrics', {
+              'Response Time': `${duration}ms`,
+              'Cache Status': 'HIT',
+            });
+            showScore(result.data.visibility_score);
+            showPhase2Data(result.data);
+            showJson('phase2Json', result.data);
+            document
+              .getElementById('phase2JsonToggle')
+              .classList.remove('hidden');
+          } else {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+              const {done, value} = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, {stream: true});
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const event = JSON.parse(line.slice(6));
+
+                  if (event.step === 'complete' && event.status === 'success') {
+                    const duration = Date.now() - startTime;
+
+                    showStatus(
+                      'phase2Status',
+                      'success',
+                      '✅ Analysis complete!'
+                    );
+                    showMetrics('phase2Metrics', {
+                      'Response Time': `${duration}ms`,
+                      'Cache Status': 'MISS',
+                    });
+                    showScore(event.data.visibility_score);
+                    showPhase2Data(event.data);
+                    showJson('phase2Json', event.data);
+                    document
+                      .getElementById('phase2JsonToggle')
+                      .classList.remove('hidden');
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          showStatus('phase2Status', 'error', `❌ Error: ${error.message}`);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '📊 Analyze Visibility';
+        }
+      }
+
+      function showStatus(elementId, type, message) {
+        const el = document.getElementById(elementId);
+        el.className = `status ${type}`;
+        el.textContent = message;
+        el.classList.remove('hidden');
+      }
+
+      function showMetrics(elementId, metrics) {
+        const el = document.getElementById(elementId);
+        el.className = 'metrics';
+        el.innerHTML = Object.entries(metrics)
+          .map(
+            ([label, value]) => `
+                <div class="metric">
+                    <div class="metric-label">${label}</div>
+                    <div class="metric-value">${value}</div>
+                </div>
+            `
+          )
+          .join('');
+        el.classList.remove('hidden');
+      }
+
+      function showPhase1Data(data) {
+        const el = document.getElementById('phase1Data');
+        el.className = 'data-card';
+        el.innerHTML = `
+                <h3>Company Information</h3>
+                <div class="data-row">
+                    <div class="data-label">Company Name:</div>
+                    <div class="data-value">${data.company_name || 'N/A'}</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Industry:</div>
+                    <div class="data-value">${data.industry || 'N/A'}</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Description:</div>
+                    <div class="data-value">${
+                      data.company_description || 'N/A'
+                    }</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Summary:</div>
+                    <div class="data-value">${
+                      data.company_summary || 'N/A'
+                    }</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Competitors:</div>
+                    <div class="data-value">
+                        ${
+                          data.competitors && data.competitors.length > 0
+                            ? `<div class="competitors-list">${data.competitors
+                                .map(
+                                  (c) =>
+                                    `<span class="competitor-tag">${c}</span>`
+                                )
+                                .join('')}</div>`
+                            : 'None found'
+                        }
+                    </div>
+                </div>
+            `;
+        el.classList.remove('hidden');
+      }
+
+      function showPhase2Data(data) {
+        const el = document.getElementById('phase2Data');
+        el.className = 'data-card';
+
+        const byModel = data.analysis_report?.by_model || {};
+        const modelStats = Object.entries(byModel)
+          .map(
+            ([model, stats]) => `
+                <div class="data-row">
+                    <div class="data-label">${model}:</div>
+                    <div class="data-value">${stats.mentions}/${
+              stats.total_responses
+            } mentions (${(stats.mention_rate * 100).toFixed(1)}%)</div>
+                </div>
+            `
+          )
+          .join('');
+
+        el.innerHTML = `
+                <h3>Analysis Results</h3>
+                <div class="data-row">
+                    <div class="data-label">Total Queries:</div>
+                    <div class="data-value">${data.total_queries || 0}</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Total Responses:</div>
+                    <div class="data-value">${data.total_responses || 0}</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Total Mentions:</div>
+                    <div class="data-value">${
+                      data.analysis_report?.total_mentions || 0
+                    }</div>
+                </div>
+                <div class="data-row">
+                    <div class="data-label">Mention Rate:</div>
+                    <div class="data-value">${(
+                      (data.analysis_report?.mention_rate || 0) * 100
+                    ).toFixed(1)}%</div>
+                </div>
+                ${modelStats}
+            `;
+        el.classList.remove('hidden');
+      }
+
+      function showScore(score) {
+        const el = document.getElementById('visibilityScore');
+        el.className = 'score-display';
+        el.textContent = `${score.toFixed(1)}%`;
+        el.classList.remove('hidden');
+      }
+
+      function showJson(elementId, data) {
+        const el = document.getElementById(elementId);
+        el.innerHTML = `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+      }
+
+      function clearPhase1() {
+        document.getElementById('phase1Status').classList.add('hidden');
+        document.getElementById('phase1Metrics').classList.add('hidden');
+        document.getElementById('phase1Data').classList.add('hidden');
+        document.getElementById('phase1JsonToggle').classList.add('hidden');
+        document.getElementById('phase1Json').classList.remove('show');
+      }
+
+      function clearPhase2() {
+        document.getElementById('phase2Status').classList.add('hidden');
+        document.getElementById('phase2Metrics').classList.add('hidden');
+        document.getElementById('visibilityScore').classList.add('hidden');
+        document.getElementById('phase2Data').classList.add('hidden');
+        document.getElementById('phase2JsonToggle').classList.add('hidden');
+        document.getElementById('phase2Json').classList.remove('show');
+      }
+    </script>
+  </body>
+</html>
