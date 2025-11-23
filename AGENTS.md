@@ -36,34 +36,47 @@ All agents share a common state that flows through the pipeline:
 
 ---
 
-## Agent 1: Industry Detector
+## Agent 1: Industry Detector (Dynamic)
 
-**File**: `agents/industry_detector.py`
+**Module**: `agents/industry_detection_agent/`
 
-**Purpose**: Scrapes company website, detects industry, identifies competitors
+**Purpose**: Scrapes company website, dynamically classifies industry, generates extraction templates, creates query categories
 
 **Process**:
 
 1. Check cache (24hr TTL)
-2. Scrape website with Firecrawl
-3. Analyze with LLM (gpt-4-mini)
-4. Extract: industry, company info, competitors
-5. Store in ChromaDB with embeddings
+2. **Parallel scraping**: Company + competitor pages simultaneously
+3. Combine scraped content
+4. **Classify industry** (LLM, no constraints)
+5. **Generate extraction template** (industry-specific fields)
+6. **Extract company data** (using template)
+7. **Generate query categories** (company-specific)
+8. Enrich competitors (optional)
+9. Store in ChromaDB with embeddings
 
-**Industries**: technology, retail, healthcare, finance, food_services, other
+**Dynamic Classification**: No hardcoded industries. LLM generates specific names like "AI-Powered Meal Kit Delivery" instead of generic "food_services"
 
 **Output**:
 
-- `industry`: Classification
+- `industry`: Specific industry name (e.g., "B2B SaaS Project Management")
+- `broad_category`: Grouping (e.g., "Technology", "Commerce")
+- `industry_description`: What defines this industry
+- `extraction_template`: Dynamic fields for this industry
+- `query_categories_template`: Custom query categories for this company
 - `company_name`, `company_description`, `company_summary`
 - `competitors`: List of competitor names
 - `competitors_data`: Rich metadata (description, products, positioning)
+- `product_category`, `market_keywords`, `target_audience`
+- `brand_positioning`, `buyer_intent_signals`, `industry_specific`
 
 **Features**:
 
-- Redis caching (90% faster on repeated URLs)
-- Retry logic (2 attempts)
-- Fallback to keyword matching if AI fails
+- **Parallel scraping** (40% faster with competitors)
+- **LangGraph workflow** (9 nodes, modular)
+- **Pure LLM classification** (no keyword fallback)
+- **Dynamic templates** (no hardcoded industry lists)
+- **Query categories** for query generator agent
+- Redis caching (93% cost savings on repeated URLs)
 - Stores competitors with rich embeddings for semantic search
 
 ---
@@ -251,15 +264,19 @@ Level 4: Complete Flow (24hr)
 ### Environment Variables
 
 ```bash
-# Required
-OPENAI_API_KEY=sk-...
-FIRECRAWL_API_KEY=...
+# LLM Provider Configuration (Choose your provider)
+INDUSTRY_ANALYSIS_PROVIDER=claude  # Options: claude, gemini, llama, openai, grok, deepseek
+QUERY_GENERATION_PROVIDER=claude   # Options: claude, gemini, llama, openai, grok, deepseek
 
-# Optional (for additional models)
-GEMINI_API_KEY=...
-ANTHROPIC_API_KEY=...
-GROK_API_KEY=...
-OPEN_ROUTER_API_KEY=...
+# API Keys (At least one required)
+ANTHROPIC_API_KEY=sk-ant-...       # For Claude (Recommended)
+GEMINI_API_KEY=...                 # For Gemini
+GROK_API_KEY=gsk-...               # For Llama (FREE via Groq)
+OPEN_ROUTER_API_KEY=sk-or-v1-...  # For Grok/DeepSeek
+OPENAI_API_KEY=sk-...              # For OpenAI
+
+# Required
+FIRECRAWL_API_KEY=...
 
 # Databases
 CHROMA_HOST=localhost
@@ -268,14 +285,46 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
+### LLM Provider Configuration
+
+The system uses a centralized LLM provider system. Configure in `.env`:
+
+```bash
+# Recommended: Claude (best balance of quality, speed, cost)
+INDUSTRY_ANALYSIS_PROVIDER=claude
+QUERY_GENERATION_PROVIDER=claude
+
+# Budget: Llama (FREE via Groq)
+INDUSTRY_ANALYSIS_PROVIDER=llama
+QUERY_GENERATION_PROVIDER=llama
+
+# Mixed: Claude for analysis, Llama for generation
+INDUSTRY_ANALYSIS_PROVIDER=claude
+QUERY_GENERATION_PROVIDER=llama
+```
+
+**Supported Providers:**
+
+- `claude` - Claude 3.5 Haiku (Recommended - fast, accurate, low cost)
+- `gemini` - Gemini 2.5 Flash Lite (Good alternative)
+- `llama` - Llama 3.1 8B via Groq (FREE, very fast)
+- `openai` - GPT-4o-mini (Requires credits)
+- `grok` - Grok 4.1 Fast via OpenRouter
+- `deepseek` - DeepSeek v3 via OpenRouter (FREE)
+
+See `docs/LLM_PROVIDER_CONFIGURATION.md` for detailed configuration guide.
+
 ### Model Settings
 
 ```python
 # config/settings.py
-INDUSTRY_ANALYSIS_MODEL = "gpt-4-mini"
-CHATGPT_MODEL = "gpt-3.5-turbo"
+INDUSTRY_ANALYSIS_PROVIDER = "claude"
+QUERY_GENERATION_PROVIDER = "claude"
+
+CLAUDE_MODEL = "claude-3-5-haiku-20241022"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
-CLAUDE_MODEL = "claude-3-haiku-20240307"
+GROQ_LLAMA_MODEL = "llama-3.1-8b-instant"
+CHATGPT_MODEL = "gpt-4o-mini"
 
 DEFAULT_MODELS = ["chatgpt", "gemini"]
 MIN_QUERIES = 20

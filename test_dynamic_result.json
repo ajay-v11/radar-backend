@@ -1,0 +1,179 @@
+{
+  "company_name": "Flipkart",
+  "company_description": "A leading Indian multi-category e-commerce marketplace platform offering a wide range of products and services online.",
+  "company_summary": "A leading Indian multi-category e-commerce marketplace platform offering a wide range of products and services online.",
+  "target_region": "India",
+  "industry": "Multi-Category E-commerce Marketplace Platform",
+  "broad_category": "Commerce",
+  "industry_description": "An integrated online marketplace that offers a comprehensive range of products across multiple categories, including electronics, fashion, home goods, mobile devices, and travel services. The platform provides a one-stop digital shopping experience with diverse product offerings and integrated services like flight bookings, creating a versatile digital retail ecosystem.",
+  "extraction_template": {
+    "extract_fields": [
+      "total_product_categories",
+      "commission_rate_structure",
+      "seller_onboarding_complexity",
+      "platform_commission_percentage",
+      "monthly_active_user_count",
+      "cross_category_transaction_rate",
+      "integrated_service_offerings"
+    ],
+    "competitor_focus": "multi-category e-commerce platforms, digital marketplaces with integrated services, cross-border online retail ecosystems, platforms with comprehensive seller networks and diverse product ranges"
+  },
+  "query_categories_template": {
+    "product_deals": {
+      "name": "Product Deals & Discounts",
+      "weight": 0.25,
+      "description": "Searches focused on finding best prices, sales, and promotional offers across product categories",
+      "examples": [
+        "Flipkart sale today",
+        "best mobile offers",
+        "electronics discount"
+      ]
+    },
+    "product_comparison": {
+      "name": "Product Comparison",
+      "weight": 0.2,
+      "description": "Queries comparing specific product models, features, and pricing across different brands",
+      "examples": [
+        "iPhone vs Samsung phone price",
+        "laptop comparison",
+        "best smartphone under 20000"
+      ]
+    },
+    "category_shopping": {
+      "name": "Category-Specific Shopping",
+      "weight": 0.2,
+      "description": "Searches targeting specific product categories and shopping needs",
+      "examples": [
+        "latest fashion trends",
+        "home appliances online",
+        "mobile phones"
+      ]
+    },
+    "brand_specific": {
+      "name": "Brand-Specific Searches",
+      "weight": 0.15,
+      "description": "Queries focused on specific brand availability, collections, and offerings",
+      "examples": [
+        "Nike shoes Flipkart",
+        "Apple products online",
+        "Lenovo laptop price"
+      ]
+    },
+    "platform_services": {
+      "name": "Platform Services & Support",
+      "weight": 0.12,
+      "description": "Searches about platform features, delivery, returns, and customer support",
+      "examples": [
+        "Flipkart delivery time",
+        "return policy",
+        "customer support"
+      ]
+    },
+    "marketplace_reputation": {
+      "name": "Marketplace Reputation",
+      "weight": 0.08,
+      "description": "Queries about platform trustworthiness, reviews, and seller ratings",
+      "examples": [
+        "Flipkart seller ratings",
+        "is Flipkart reliable",
+        "customer reviews"
+      ]
+    }
+  },
+  "product_category": "Multi-Category E-commerce Marketplace",
+  "market_keywords": [
+    "online shopping",
+    "e-commerce",
+    "digital marketplace",
+    "indian retail",
+    "online deals",
+    "product variety",
+    "digital shopping"
+  ],
+  "target_audience": "Indian consumers, digital-savvy shoppers, urban and semi-urban populations, tech-aware millennials and Gen Z",
+  "brand_positioning": {
+    "value_proposition": "One-stop digital marketplace with extensive product range and competitive pricing",
+    "differentiators": [
+      "Comprehensive product categories",
+      "Integrated service offerings",
+      "Competitive pricing",
+      "User-friendly platform"
+    ],
+    "price_positioning": "mid"
+  },
+  "buyer_intent_signals": {
+    "common_questions": [
+      "What deals are available?",
+      "How reliable is the product quality?",
+      "What are the shipping options?",
+      "Can I return or exchange items easily?"
+    ],
+    "decision_factors": [
+      "Price competitiveness",
+      "Product variety",
+      "Delivery speed",
+      "Customer reviews",
+      "Return policy"
+    ],
+    "pain_points": [
+      "Product authenticity concerns",
+      "Shipping and delivery delays",
+      "Complex return processes",
+      "Limited warranty support"
+    ]
+  },
+  "industry_specific": {
+    "total_product_categories": "50+ categories",
+    "commission_rate_structure": "10-25% per transaction",
+    "seller_onboarding_complexity": "Moderate",
+    "platform_commission_percentage": "15%",
+    "monthly_active_user_count": "100 million+",
+    "cross_category_transaction_rate": "35%",
+    "integrated_service_offerings": "Flight bookings, grocery, electronics, fashion, home goods"
+  },
+  "competitors": [
+    "Amazon India",
+    "Snapdeal",
+    "Meesho",
+    "Myntra",
+    "ShopClues"
+  ],
+  "competitors_data": [
+    {
+      "name": "Amazon India",
+      "description": "Global e-commerce giant with strong presence in Indian market",
+      "products": "Electronics, fashion, home goods, digital services",
+      "positioning": "Global brand with extensive international product range",
+      "price_tier": "mid"
+    },
+    {
+      "name": "Snapdeal",
+      "description": "Indian e-commerce platform focusing on value-driven shopping",
+      "products": "Electronics, fashion, home products",
+      "positioning": "Budget-friendly online marketplace",
+      "price_tier": "budget"
+    },
+    {
+      "name": "Meesho",
+      "description": "Social commerce platform targeting small-town consumers",
+      "products": "Fashion, home goods, electronics",
+      "positioning": "Social selling and reseller-friendly platform",
+      "price_tier": "budget"
+    },
+    {
+      "name": "Myntra",
+      "description": "Fashion-focused e-commerce platform",
+      "products": "Clothing, accessories, lifestyle products",
+      "positioning": "Fashion and lifestyle digital marketplace",
+      "price_tier": "mid"
+    },
+    {
+      "name": "ShopClues",
+      "description": "Online marketplace targeting value-conscious consumers",
+      "products": "Electronics, fashion, home goods",
+      "positioning": "Discount-driven e-commerce platform",
+      "price_tier": "budget"
+    }
+  ],
+  "errors": []
+}

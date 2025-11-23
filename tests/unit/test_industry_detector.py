@@ -15,17 +15,17 @@ from models.schemas import WorkflowState
 # TEST CONFIGURATION - EDIT THESE
 # ============================================================================
 
-TEST_COMPANY_URL = "https://boot.dev"
+TEST_COMPANY_URL = "https://www.evolutyz.com/"
 TEST_COMPANY_NAME = ""  # Leave empty to auto-detect
 TEST_COMPANY_DESCRIPTION = ""  # Leave empty to auto-detect
 
 # Optional: Provide competitor URLs (max 4)
 TEST_COMPETITOR_URLS = {
     # "Blue Apron": "https://blueapron.com",
-    # "EveryPlate": "https://everyplate.com",
+    # "EveryPlate": "https://www.everyplate.com",
 }
 
-TEST_LLM_PROVIDER = "llama"  # Options: openai, gemini, llama, claude (openai recommended)
+TEST_LLM_PROVIDER = "openai"  # Options: openai, gemini, llama, claude (openai recommended)
 
 # ============================================================================
 
@@ -136,9 +136,7 @@ def test_industry_detector():
     else:
         print("   None detected")
     
-    print(f"\n📝 Scraped Content:")
-    content = result.get('scraped_content', '')
-    print(f"   Length: {len(content)} characters")
+    # Note: scraped_content is no longer returned (excluded to reduce payload size)
     
     print(f"\n⚠️  Errors:")
     errors = result.get('errors', [])
@@ -153,31 +151,61 @@ def test_industry_detector():
     # Save full results to JSON
     output_file = Path(__file__).parent / "industry_detector_results.json"
     with open(output_file, 'w') as f:
-        # Convert to serializable format
-        serializable_result = {
-            k: v for k, v in result.items() 
-            if k != 'scraped_content'  # Exclude large content
-        }
+        serializable_result = dict(result)
         json.dump(serializable_result, f, indent=2)
     
     print(f"💾 Full results saved to: {output_file}")
+    
     print("=" * 70)
     
-    # Assertions
+    # Detailed diagnostics
+    print("\n🔍 DIAGNOSTICS:")
+    print("=" * 70)
+    
+    # Check competitor scraping
+    if TEST_COMPETITOR_URLS:
+        competitors_data = result.get('competitors_data', [])
+        enriched_count = sum(1 for c in competitors_data if c.get('value_proposition'))
+        print(f"📊 COMPETITOR SCRAPING: {enriched_count}/{len(TEST_COMPETITOR_URLS)} enriched")
+        if enriched_count == 0 and TEST_COMPETITOR_URLS:
+            print("   ⚠️  No competitors were enriched with scraped data")
+    
+    # Check LLM analysis
     if not result.get('company_name'):
-        print("\n⚠️  WARNING: Company name not detected")
-        print("   This might indicate:")
-        print("   - API key issue for the selected LLM provider")
+        print("❌ LLM ANALYSIS FAILED: Company name not detected")
+        print("   Possible causes:")
+        print(f"   - {TEST_LLM_PROVIDER.upper()}_API_KEY not configured or invalid")
         print("   - Rate limiting")
-        print("   - Network issues")
-        print(f"   - Check your {TEST_LLM_PROVIDER.upper()}_API_KEY in .env")
+        print("   - LLM returned empty response")
         if result.get('errors'):
             print(f"\n   Errors encountered:")
             for err in result['errors']:
                 print(f"      - {err}")
     else:
+        print(f"✅ LLM ANALYSIS OK: Company identified as '{result.get('company_name')}'")
+        
+        # Check industry classification
+        industry = result.get('industry', 'other')
+        if industry == 'other':
+            print("⚠️  INDUSTRY: Classified as 'other' (fallback)")
+        else:
+            print(f"✅ INDUSTRY: Classified as '{industry}'")
+        
+        # Check competitor detection
+        competitors = result.get('competitors', [])
+        if competitors:
+            print(f"✅ COMPETITORS: {len(competitors)} detected")
+        else:
+            print("⚠️  COMPETITORS: None detected by LLM")
+    
+    print("=" * 70)
+    
+    # Final verdict
+    if result.get('company_name'):
         assert result.get('industry') in ['technology', 'retail', 'healthcare', 'finance', 'food_services', 'other']
         print("\n✅ TEST PASSED!")
+    else:
+        print("\n❌ TEST FAILED - Check diagnostics above")
 
 
 if __name__ == "__main__":

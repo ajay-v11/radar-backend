@@ -18,12 +18,17 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = False
     
+    # LLM Provider Configuration
+    # Choose which provider to use for different tasks
+    # Options: "openai", "claude", "gemini", "llama", "grok", "deepseek"
+    INDUSTRY_ANALYSIS_PROVIDER: str = "claude"  # Provider for industry detection & analysis
+    QUERY_GENERATION_PROVIDER: str = "claude"   # Provider for query generation
+    
     # Model Settings - Cost-effective models
     CHATGPT_MODEL: str = "gpt-3.5-turbo"
-    INDUSTRY_ANALYSIS_MODEL: str = "gpt-40-mini"  # For industry detection and analysis
-    CLAUDE_MODEL: str = "claude-3-haiku-20240307"  # Cheaper than Sonnet
+    CLAUDE_MODEL: str = "claude-3-5-haiku-20241022"  # Latest Haiku
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"  # Cost-effective Gemini
-    GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Llama 3.1 8B via Groq (fastest)
+    GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Llama 3.1 8B via Groq (FREE)
     OPENROUTER_GROK_MODEL: str = "x-ai/grok-4.1-fast"  # Grok 4.1 Fast via OpenRouter
     OPENROUTER_DEEPSEEK_MODEL: str = "deepseek/deepseek-chat-v3-0324:free"  # DeepSeek free tier
     

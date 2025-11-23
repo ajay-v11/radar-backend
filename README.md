@@ -128,33 +128,80 @@ python tests/test_clients.py     # Test databases
 
 ---
 
-## 📌 F. API Keys
+## 📌 F. LLM Provider Configuration
 
-### Required (FREE Options Available)
+### 🎯 Easy Provider Switching
 
-| Service       | Purpose                             | Get Key                                                           | Cost      |
-| ------------- | ----------------------------------- | ----------------------------------------------------------------- | --------- |
-| **Groq**      | Llama (industry detection, queries) | [console.groq.com](https://console.groq.com/keys)                 | FREE      |
-| **Gemini**    | Query testing                       | [makersuite.google.com](https://makersuite.google.com/app/apikey) | FREE tier |
-| **Firecrawl** | Web scraping                        | [firecrawl.dev](https://firecrawl.dev)                            | FREE tier |
+The system uses a **centralized LLM provider system**. Switch providers in one line:
 
-### Optional
+```bash
+# Quick switch (recommended)
+python switch_provider.py claude
 
-| Service    | Purpose         | Cost               |
-| ---------- | --------------- | ------------------ |
-| OpenAI     | ChatGPT testing | ~$0.002/1K tokens  |
-| Anthropic  | Claude testing  | ~$0.0025/1K tokens |
-| OpenRouter | Grok, DeepSeek  | Varies             |
+# Or edit .env directly
+INDUSTRY_ANALYSIS_PROVIDER=claude
+QUERY_GENERATION_PROVIDER=claude
+```
+
+### Supported Providers
+
+| Provider   | Model                 | Cost     | Speed     | Recommended For      |
+| ---------- | --------------------- | -------- | --------- | -------------------- |
+| **claude** | Claude 3.5 Haiku      | Low      | Fast      | ✅ **Best overall**  |
+| **llama**  | Llama 3.1 8B (Groq)   | **FREE** | Very Fast | 💰 **Budget option** |
+| **gemini** | Gemini 2.5 Flash Lite | Low      | Fast      | Good alternative     |
+| openai     | GPT-4o-mini           | Medium   | Medium    | Requires credits     |
+| grok       | Grok 4.1 Fast         | Medium   | Fast      | Via OpenRouter       |
+| deepseek   | DeepSeek v3           | **FREE** | Fast      | Via OpenRouter       |
+
+### API Keys
+
+**Minimum Required (Choose One):**
+
+| Service       | Purpose                 | Get Key                                                           | Cost      |
+| ------------- | ----------------------- | ----------------------------------------------------------------- | --------- |
+| **Anthropic** | Claude (Recommended)    | [console.anthropic.com](https://console.anthropic.com)            | Low cost  |
+| **Groq**      | Llama (FREE)            | [console.groq.com](https://console.groq.com/keys)                 | FREE      |
+| **Gemini**    | Gemini                  | [makersuite.google.com](https://makersuite.google.com/app/apikey) | FREE tier |
+| **Firecrawl** | Web scraping (Required) | [firecrawl.dev](https://firecrawl.dev)                            | FREE tier |
+
+**Optional (for testing AI models):**
+
+| Service    | Purpose         | Cost              |
+| ---------- | --------------- | ----------------- |
+| OpenAI     | ChatGPT testing | ~$0.002/1K tokens |
+| OpenRouter | Grok, DeepSeek  | Varies            |
 
 **Environment Variables:**
 
 ```bash
-GROK_API_KEY=gsk_...           # Required
-GEMINI_API_KEY=...             # Required
-FIRECRAWL_API_KEY=...          # Required
-OPENAI_API_KEY=sk-...          # Optional
-ANTHROPIC_API_KEY=sk-ant-...   # Optional
+# LLM Provider (choose one)
+INDUSTRY_ANALYSIS_PROVIDER=claude  # or: llama, gemini, openai
+QUERY_GENERATION_PROVIDER=claude   # or: llama, gemini, openai
+
+# API Keys (at least one required)
+ANTHROPIC_API_KEY=sk-ant-...       # For Claude (Recommended)
+GROK_API_KEY=gsk_...               # For Llama (FREE)
+GEMINI_API_KEY=...                 # For Gemini
+FIRECRAWL_API_KEY=...              # Required for scraping
+
+# Optional
+OPENAI_API_KEY=sk-...              # For OpenAI
+OPEN_ROUTER_API_KEY=sk-or-v1-...  # For Grok/DeepSeek
 ```
+
+**Quick Commands:**
+
+```bash
+# Test your configuration
+python test_llm_providers.py
+
+# Switch providers easily
+python switch_provider.py claude   # Switch to Claude
+python switch_provider.py llama    # Switch to Llama (free)
+```
+
+📖 **Detailed Guide**: See `docs/LLM_PROVIDER_CONFIGURATION.md`
 
 ⚠️ **Never commit `.env` to version control!**
 

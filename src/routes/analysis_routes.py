@@ -5,7 +5,7 @@ Two-phase analysis workflow:
 1. Company Analysis (Phase 1) - Scraping, industry detection, competitor identification
 2. Visibility Analysis (Phase 2) - Query generation, model testing, scoring
 """
-
+import asyncio
 import logging
 import json
 from typing import List, Optional
@@ -33,6 +33,7 @@ class CompanyAnalysisRequest(BaseModel):
     """Request model for company analysis (Phase 1)."""
     company_url: HttpUrl
     company_name: Optional[str] = None
+    target_region: str = "United States"
     
     class Config:
         extra = "forbid"
@@ -62,14 +63,22 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
     
     This endpoint:
     - Scrapes company website
-    - Detects industry category
+    - Detects industry category dynamically (no hardcoded industries)
     - Identifies competitors
     - Generates company summary
-    - Stores data for reuse
+    - Creates dynamic extraction templates and query categories
+    - Stores data for reuse in Phase 2
+    
+    Parameters:
+    - company_url: Company website URL (required)
+    - company_name: Optional company name override
+    - target_region: Target region for AI model context (default: "United States")
+      Examples: "United States", "United Kingdom", "Canada", "Australia", "Germany"
     
     Cache behavior:
     - Cache HIT: Returns JSON immediately (~10-50ms)
     - Cache MISS: Streams SSE with real-time progress
+    - Cache key includes: company_url + target_region
     
     This step is isolated because:
     - Higher chance of failure (broken URLs, scraping issues)
@@ -80,24 +89,29 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
         POST /analyze/company
         {
             "company_url": "https://hellofresh.com",
-            "company_name": "HelloFresh"
+            "company_name": "HelloFresh",
+            "target_region": "United States"
         }
     
     Returns (cached):
         {
             "cached": true,
             "data": {
-                "industry": "food_services",
+                "industry": "AI-Powered Meal Kit Delivery",
+                "broad_category": "Commerce",
                 "company_name": "HelloFresh",
                 "company_description": "...",
-                "competitors": ["Blue Apron", "Home Chef", ...]
+                "competitors": ["Blue Apron", "Home Chef", ...],
+                "target_region": "United States",
+                "query_categories_template": {...},
+                "extraction_template": {...}
             }
         }
     
     Returns (streaming): Server-Sent Events with progress updates
     """
     # Check cache first
-    cached = _get_cached_analysis(str(request.company_url))
+    cached = _get_cached_analysis(str(request.company_url), request.target_region)
     
     if cached:
         return {
@@ -109,7 +123,8 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
     async def _stream_events():
         async for event_json in analyze_company_stream(
             str(request.company_url),
-            request.company_name
+            request.company_name,
+            request.target_region
         ):
             yield f"data: {event_json}\n\n"
     
@@ -167,7 +182,7 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest):
         }, "Using cached company data")
         
         # Run visibility analysis
-        import asyncio
+  
         
         final_result = await asyncio.to_thread(
             execute_visibility_analysis,

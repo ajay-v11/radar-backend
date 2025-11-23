@@ -1,74 +1,96 @@
 {
-  "company_url": "https://boot.dev",
-  "company_name": "boot.dev",
-  "company_description": "An online learning platform for backend development, offering interactive coding lessons and personalized help from AI.",
+  "company_url": "https://www.evolutyz.com/",
+  "company_name": "Evolutyz Solutions",
+  "company_description": "Evolutyz Solutions is an award-winning IT solutions firm specializing in product development and IT talent services.",
   "competitor_urls": {},
   "errors": [],
-  "company_summary": "An online learning platform for backend development, offering interactive coding lessons and personalized help from AI.",
+  "company_summary": "Evolutyz Solutions is an award-winning IT solutions firm specializing in product development and IT talent services.",
   "industry": "technology",
-  "product_category": "online learning platform",
-  "market_keywords": [
-    "backend development",
-    "online learning",
-    "interactive coding",
-    "AI-powered learning",
-    "career development"
+  "competitors": [
+    "Evolutyz Solutions",
+    "Toptal",
+    "Upwork",
+    "Cognizant",
+    "Accenture",
+    "Robert Half Technology"
   ],
-  "target_audience": "Developers, programmers, and tech professionals looking to improve their skills in backend development.",
+  "competitors_data": [
+    {
+      "name": "Evolutyz Solutions",
+      "description": "Evolutyz Solutions is an award-winning IT solutions firm specializing in product development and IT talent services.",
+      "products": "IT solutions and staffing services",
+      "positioning": "Evolutyz connects businesses with innovative IT solutions and top talent to drive success.",
+      "price_tier": "mid"
+    },
+    {
+      "name": "Toptal",
+      "description": "A global network of top freelance software developers and designers.",
+      "products": "Freelance talent sourcing and project-based services.",
+      "positioning": "Focus on providing the top 3% of freelance talent.",
+      "price_tier": "premium"
+    },
+    {
+      "name": "Upwork",
+      "description": "A platform connecting businesses with freelancers across various fields.",
+      "products": "Freelance talent marketplace for IT and other services.",
+      "positioning": "Wide range of freelance services with flexible pricing.",
+      "price_tier": "mid"
+    },
+    {
+      "name": "Cognizant",
+      "description": "A leading professional services company, transforming business and technology.",
+      "products": "IT services, consulting, and digital transformation solutions.",
+      "positioning": "Strong focus on digital innovation and transformation.",
+      "price_tier": "premium"
+    },
+    {
+      "name": "Accenture",
+      "description": "A global professional services company with leading capabilities in digital, cloud, and security.",
+      "products": "Consulting, technology services, and outsourcing.",
+      "positioning": "Comprehensive solutions across various industries.",
+      "price_tier": "premium"
+    },
+    {
+      "name": "Robert Half Technology",
+      "description": "A specialized staffing agency for IT professionals.",
+      "products": "IT staffing and consulting services.",
+      "positioning": "Focus on connecting businesses with qualified IT professionals quickly.",
+      "price_tier": "mid"
+    }
+  ],
+  "product_category": "IT solutions and staffing services",
+  "market_keywords": [
+    "IT solutions",
+    "staff augmentation",
+    "product development"
+  ],
+  "target_audience": "Businesses seeking IT solutions and professionals looking for technology job opportunities.",
   "brand_positioning": {
-    "value_proposition": "Learn backend development the smart way with interactive coding lessons and personalized help from AI.",
+    "value_proposition": "Evolutyz connects businesses with innovative IT solutions and top talent to drive success.",
     "differentiators": [
-      "interactive coding lessons",
-      "personalized help from AI"
+      "Award-winning service",
+      "Focus on employee satisfaction and development"
     ],
     "price_positioning": "mid"
   },
   "buyer_intent_signals": {
     "common_questions": [
-      "How do I learn backend development?",
-      "What is the best way to improve my coding skills?"
+      "What IT solutions do you offer?",
+      "How can you help with staffing needs?"
     ],
     "decision_factors": [
-      "ease of use",
-      "effectiveness of learning method"
+      "Quality of service",
+      "Expertise of talent"
     ],
     "pain_points": [
-      "difficulty in understanding complex coding concepts",
-      "lack of motivation to continue learning"
+      "Difficulty in finding skilled IT professionals",
+      "Need for custom software solutions"
     ]
   },
   "industry_specific": {
-    "integrations": "integration with popular development tools and platforms",
-    "pricing_model": "monthly or yearly membership",
-    "tech_stack": "JavaScript, Node.js, and other popular technologies",
-    "use_cases": "web development, mobile app development, and other areas of backend development"
-  },
-  "competitors": [
-    "FreeCodeCamp",
-    "Udemy",
-    "Pluralsight"
-  ],
-  "competitors_data": [
-    {
-      "name": "FreeCodeCamp",
-      "description": "A non-profit online learning platform that offers a comprehensive curriculum in web development.",
-      "products": "interactive coding lessons, projects, and certifications",
-      "positioning": "free and open-source",
-      "price_tier": "budget"
-    },
-    {
-      "name": "Udemy",
-      "description": "A popular online learning platform that offers a wide range of courses on various topics, including backend development.",
-      "products": "video courses, interactive lessons, and projects",
-      "positioning": "wide range of courses and topics",
-      "price_tier": "mid"
-    },
-    {
-      "name": "Pluralsight",
-      "description": "A leading online learning platform that offers a large library of courses and tutorials on various topics, including backend development.",
-      "products": "video courses, interactive lessons, and projects",
-      "positioning": "large library of courses and tutorials",
-      "price_tier": "premium"
-    }
-  ]
+    "tech_stack": "Agile systems, DevOps, enterprise security suites",
+    "use_cases": "Custom software development, IT staff augmentation, digital transformation",
+    "integrations": "Various third-party software and tools for seamless operations",
+    "pricing_model": "Project-based and retainer models"
+  }
 }

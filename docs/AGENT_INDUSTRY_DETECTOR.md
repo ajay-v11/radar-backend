@@ -1,12 +1,12 @@
-# Agent 1: Industry Detector
+# Agent 1: Industry Detector (Dynamic)
 
 ## Purpose
 
-Analyzes company websites to extract foundational data: industry classification, company information, and competitor identification.
+Analyzes company websites to extract foundational data with **dynamic industry classification** (no hardcoded constraints), generates custom extraction templates, and creates company-specific query categories for the query generator.
 
 ## Overview
 
-The Industry Detector is the first agent in the workflow. It scrapes company websites using Firecrawl, analyzes content with LLM (gpt-4-mini), and stores rich embeddings in ChromaDB for semantic search.
+The Industry Detector uses a **LangGraph-based modular workflow** with parallel scraping. It classifies companies into specific industries (e.g., "AI-Powered Meal Kit Delivery" instead of generic "food_services"), generates custom extraction templates, and creates query categories tailored to each company.
 
 ## Process Flow
 
@@ -18,66 +18,104 @@ Check Cache (24hr TTL)
 ├─> Cache HIT → Return cached data (10-50ms)
 └─> Cache MISS → Continue
     ↓
-Scrape Website (Firecrawl)
+START (parallel scraping)
+  ├─> Scrape Company Pages ────┐
+  └─> Scrape Competitor Pages ─┴─> Combine Content
     ↓
-Analyze with LLM (gpt-4-mini)
+Classify Industry (Dynamic, No Constraints)
     ↓
-Extract:
-  • Industry classification
-  • Company name, description, summary
-  • 3-5 competitors with rich metadata
+Generate Extraction Template (Industry-Specific)
     ↓
-Store in ChromaDB (embeddings)
+Extract Company Data (Using Template)
+    ↓
+Generate Query Categories (Company-Specific)
+    ↓
+Enrich Competitors (Optional)
+    ↓
+Finalize & Store in ChromaDB
     ↓
 Cache Results (24hr)
     ↓
-Output: Complete company profile
+Output: Complete company profile + templates
 ```
 
 ## Implementation
 
-**File**: `agents/industry_detector.py`
+**Module**: `agents/industry_detection_agent/`
+
+**Entry Point**: `agents/industry_detection_agent/__init__.py`
 
 **Function Signature**:
 
 ```python
-def detect_industry(
-    state: WorkflowState,
-    llm_provider: str = "openai"
-) -> WorkflowState
+def run_industry_detection_workflow(
+    company_url: str,
+    company_name: str = "",
+    company_description: str = "",
+    competitor_urls: Dict[str, str] = None,
+    llm_provider: str = "openai",
+    progress_callback = None
+) -> Dict
 ```
 
 **Parameters**:
 
-- `state`: WorkflowState with `company_url` and optional `company_name`
+- `company_url`: Company website URL (required)
+- `company_name`: Optional company name
+- `company_description`: Optional company description
+- `competitor_urls`: Optional dict of competitor names to URLs
 - `llm_provider`: LLM to use ("openai", "gemini", "llama", "claude")
+- `progress_callback`: Optional callback for streaming progress
 
-**Returns**: Updated WorkflowState with:
+**Returns**: Dictionary with:
 
-- `industry`: Classification (technology, retail, healthcare, finance, food_services, other)
+- `industry`: Specific industry name (e.g., "AI-Powered Meal Kit Delivery")
+- `broad_category`: Broad grouping (e.g., "Technology", "Commerce")
+- `industry_description`: 2-3 sentence description of the industry
+- `extraction_template`: Dynamic extraction fields for this industry
+- `query_categories_template`: Custom query categories for this company
 - `company_name`: Extracted or confirmed name
 - `company_description`: Brief 1-2 sentence description
 - `company_summary`: Comprehensive 3-4 sentence summary
 - `competitors`: List of competitor names
 - `competitors_data`: Rich metadata (description, products, positioning)
-- `scraped_content`: Raw markdown content
+- `product_category`: Specific product/service category
+- `market_keywords`: 5-8 search keywords
+- `target_audience`: Primary target customers
+- `brand_positioning`: Value proposition, differentiators, price tier
+- `buyer_intent_signals`: Common questions, decision factors, pain points
+- `industry_specific`: Industry-specific fields extracted using template
 - `errors`: List of non-blocking errors
 
-## Industry Classifications
+## Dynamic Industry Classification
 
-### Supported Industries
+### No Hardcoded Constraints
 
-1. **technology**: Software, SaaS, AI, cloud, apps, IT services, hardware
-2. **retail**: E-commerce, stores, fashion, consumer goods, marketplaces
-3. **healthcare**: Medical services, pharmaceuticals, biotech, telemedicine
-4. **finance**: Banking, fintech, payments, insurance, investment
-5. **food_services**: Restaurants, meal delivery, catering, meal kits
-6. **other**: Default fallback category
+The agent uses **pure LLM-based classification** without predefined industry lists. The LLM generates:
+
+1. **Specific Industry Name**: Descriptive, 2-5 words (e.g., "B2B SaaS Project Management Tools")
+2. **Broad Category**: High-level grouping (e.g., "Technology", "Commerce", "Healthcare")
+3. **Industry Description**: 2-3 sentences defining what characterizes this industry
+
+### Examples of Dynamic Classifications
+
+**Good Classifications** (Specific):
+
+- "AI-Powered Meal Kit Delivery"
+- "B2B SaaS Project Management Tools"
+- "Sustainable Fashion E-commerce"
+- "Telehealth Mental Wellness Platform"
+- "Crypto Trading & Investment Platform"
+
+**Bad Classifications** (Too Generic):
+
+- "Technology"
+- "Food Services"
+- "Healthcare"
 
 ### Classification Method
 
-**Primary**: LLM analysis of scraped content
-**Fallback**: Keyword matching if LLM fails
+**Pure LLM**: No keyword fallback. The LLM analyzes scraped content and generates a specific industry classification based on the company's actual business model, not generic categories.
 
 ## Web Scraping
 
@@ -127,13 +165,105 @@ def detect_industry(
 **Storage**: Redis
 **Benefit**: 90% faster on repeated URLs
 
-## LLM Analysis
+## LangGraph Workflow Nodes
 
-### Model Configuration
+### Node 1: Scrape Company Pages (Parallel)
+
+Scrapes homepage and /about page simultaneously.
+
+### Node 2: Scrape Competitor Pages (Parallel)
+
+Scrapes competitor homepages if URLs provided.
+
+### Node 3: Combine Content
+
+Merges all scraped content for analysis.
+
+### Node 4: Classify Industry
+
+**Pure LLM classification** - generates specific industry name, broad category, and description.
+
+**Prompt**:
+
+```python
+"""Classify this company into a SPECIFIC industry.
+
+Examples of GOOD classifications:
+- "AI-Powered Meal Kit Delivery"
+- "B2B SaaS Project Management Tools"
+
+Examples of BAD classifications (too generic):
+- "Technology"
+- "Food Services"
+
+Provide:
+1. A specific industry name (2-5 words)
+2. A broad category for grouping
+3. A 2-3 sentence description of what defines this industry
+"""
+```
+
+### Node 5: Generate Extraction Template
+
+Creates industry-specific extraction fields dynamically.
+
+**Output Example**:
+
+```json
+{
+  "extract_fields": [
+    "menu_customization_options",
+    "dietary_filters",
+    "delivery_frequency",
+    "subscription_tiers",
+    "ingredient_sourcing"
+  ],
+  "competitor_focus": "meal kit services, AI-powered food delivery, subscription meal platforms"
+}
+```
+
+### Node 6: Extract Company Data
+
+Uses the generated template to extract comprehensive company data.
+
+### Node 7: Generate Query Categories
+
+Creates company-specific query categories with weights for the query generator.
+
+**Output Example**:
+
+```json
+{
+  "product_comparison": {
+    "name": "Product Comparison",
+    "weight": 0.25,
+    "description": "Users comparing specific products",
+    "examples": ["HelloFresh vs Blue Apron", "best meal kits"]
+  },
+  "dietary_needs": {
+    "name": "Dietary Needs",
+    "weight": 0.2,
+    "description": "Specific dietary requirements",
+    "examples": ["keto meal delivery", "vegan meal kits"]
+  }
+}
+```
+
+### Node 8: Enrich Competitors
+
+Enriches competitor data with scraped content (if available).
+
+### Node 9: Finalize
+
+Marks workflow as complete and returns results.
+
+## LLM Configuration
+
+### Model Settings
 
 **Default Model**: gpt-4-mini (configurable via `settings.INDUSTRY_ANALYSIS_MODEL`)
-**Temperature**: 0.3 (deterministic)
-**Max Tokens**: 1000
+**Temperature**: 0.3 (deterministic) / 0.8 (query generation)
+**Max Tokens**: 2000
 **Timeout**: 30 seconds
 
 ### Supported LLM Providers
@@ -143,40 +273,9 @@ def detect_industry(
 3. **Llama**: llama-3.1-8b-instant (via Groq)
 4. **Claude**: claude-3-haiku-20240307
 
-### Analysis Prompt
+### Structured Output
 
-```python
-prompt = f"""Analyze the following website content and extract key information.
-
-Website URL: {company_url}
-Provided Company Name: {provided_name}
-
-Website Content:
-{scraped_content}
-
-Provide JSON response with:
-{{
-    "company_name": "Official company name",
-    "company_description": "Brief 1-2 sentence description",
-    "company_summary": "Comprehensive 3-4 sentence summary",
-    "industry": "One of: technology, retail, healthcare, finance, food_services, other",
-    "competitors": [
-        {{
-            "name": "Competitor name",
-            "description": "What they do",
-            "products": "Main products/services",
-            "positioning": "Market position (premium, budget, innovative)"
-        }}
-    ]
-}}
-"""
-```
-
-### Retry Logic
-
-**Attempts**: 2
-**Delay**: 1 second between retries
-**Fallback**: Keyword matching if all attempts fail
+Uses Pydantic models for structured LLM output with automatic fallback to JSON parsing if structured output fails.
 
 ## Competitor Extraction
 
@@ -303,53 +402,45 @@ except Exception as e:
     errors.append(f"Scraping failed: {e}")
     content = ""  # Continue with empty content
 
-# Fallback to keyword matching
+# No keyword fallback - pure LLM approach
 if not content:
-    industry = fallback_keyword_detection(company_name, description)
+    errors.append("No content available for analysis")
+    state["industry"] = "Unknown"
+    state["broad_category"] = "Other"
 
 state["errors"] = errors
 return state
 ```
 
-### Fallback Strategy
+### No Fallback Strategy
 
-If LLM analysis fails, uses keyword matching:
-
-```python
-INDUSTRY_KEYWORDS = {
-    "technology": ["software", "saas", "cloud", "ai", ...],
-    "retail": ["retail", "store", "ecommerce", ...],
-    "healthcare": ["health", "medical", "hospital", ...],
-    ...
-}
-
-def fallback_keyword_detection(company_name, text):
-    combined_text = f"{company_name} {text}".lower()
-
-    # Score each industry by keyword matches
-    scores = {}
-    for industry, keywords in INDUSTRY_KEYWORDS.items():
-        score = sum(1 for kw in keywords if kw in combined_text)
-        scores[industry] = score
-
-    # Return industry with highest score
-    return max(scores, key=scores.get) if max(scores.values()) > 0 else "other"
-```
+**Removed**: Keyword matching fallback has been removed. The system uses pure LLM-based classification. If LLM fails, the industry is marked as "Unknown" rather than falling back to hardcoded keyword matching.
 
 ## Performance
 
 ### Latency
 
-- **Cold cache**: 4-8 seconds (scraping + analysis)
-- **Warm scrape cache**: 2-3 seconds (analysis only)
+- **Cold cache**: 8-15 seconds (parallel scraping + 4 LLM calls)
+- **Warm scrape cache**: 4-6 seconds (4 LLM calls only)
 - **Full cache**: 10-50ms (instant)
+
+### Parallel Scraping Benefit
+
+With parallel scraping (company + competitors):
+
+- **Sequential**: 10-15 seconds for 3 sites
+- **Parallel**: 5-8 seconds for 3 sites (40% faster)
 
 ### API Costs
 
 - **Firecrawl**: ~$0.01 per scrape
-- **OpenAI (gpt-4-mini)**: ~$0.001 per analysis
-- **Total**: ~$0.011 per cold request
-- **With caching**: ~$0.001 per warm request (90% savings)
+- **OpenAI (gpt-4-mini)**: ~$0.004 per analysis (4 LLM calls)
+  - Industry classification: ~$0.001
+  - Template generation: ~$0.001
+  - Data extraction: ~$0.001
+  - Query categories: ~$0.001
+- **Total**: ~$0.014 per cold request
+- **With caching**: ~$0.001 per warm request (93% savings)
 
 ## Configuration
 
@@ -388,19 +479,25 @@ RETRY_DELAY = 1.0
 ### Unit Test
 
 ```python
-def test_industry_detector():
-    state = {
-        "company_url": "https://hellofresh.com",
-        "company_name": "",
-        "errors": []
-    }
+from agents.industry_detection_agent import run_industry_detection_workflow
 
-    result = detect_industry(state)
+def test_dynamic_industry_detector():
+    result = run_industry_detection_workflow(
+        company_url="https://hellofresh.com",
+        llm_provider="openai"
+    )
 
-    assert result["industry"] == "food_services"
+    # Dynamic classification (not hardcoded)
+    assert "Meal" in result["industry"] or "Food" in result["industry"]
+    assert result["broad_category"] in ["Commerce", "Food Services", "Technology"]
     assert result["company_name"] == "HelloFresh"
     assert len(result["competitors"]) > 0
     assert "Blue Apron" in result["competitors"]
+
+    # New dynamic fields
+    assert "extract_fields" in result["extraction_template"]
+    assert len(result["query_categories_template"]) > 0
+    assert result["industry_description"] != ""
 ```
 
 ### Cache Test
@@ -411,38 +508,49 @@ def test_caching():
 
     # First request (cache miss)
     start = time.time()
-    result1 = detect_industry({"company_url": url, "errors": []})
+    result1 = run_industry_detection_workflow(company_url=url)
     duration1 = time.time() - start
 
     # Second request (cache hit)
     start = time.time()
-    result2 = detect_industry({"company_url": url, "errors": []})
+    result2 = run_industry_detection_workflow(company_url=url)
     duration2 = time.time() - start
 
     assert duration2 < duration1 * 0.1  # 10x faster
     assert result1["industry"] == result2["industry"]
+    assert result1["query_categories_template"] == result2["query_categories_template"]
 ```
 
 ## Common Issues
 
-### Issue: Industry detected as "other"
+### Issue: Industry detected as "Unknown"
 
-**Cause**: Website content doesn't match keyword patterns or LLM failed
+**Cause**: LLM classification failed or no content available
 **Solution**:
 
 - Check Firecrawl API key is configured
 - Verify website is accessible
 - Review scraped content in logs
-- Provide more detailed company_description
+- Check LLM API key (OpenAI, Gemini, etc.)
+- Provide company_description to help classification
 
-### Issue: No competitors found
+### Issue: No query categories generated
 
-**Cause**: LLM couldn't identify competitors from website content
+**Cause**: LLM failed to generate query categories
 **Solution**:
 
-- Future enhancement: Allow user-provided competitor list
-- Check if website mentions competitors
-- Review LLM analysis in logs
+- Check LLM API key and quota
+- Review errors in response
+- Verify industry classification succeeded
+- Try different llm_provider
+
+### Issue: Structured output warning
+
+**Cause**: Pydantic schema incompatible with OpenAI's structured output
+**Solution**:
+
+- Ignore warning - system automatically falls back to JSON parsing
+- No action needed - fallback works correctly
 
 ### Issue: Scraping fails
 
@@ -453,6 +561,34 @@ def test_caching():
 - Check Firecrawl API status
 - Try fallback domain (.co.in → .com)
 - Provide company_description to skip scraping
+
+## New Features
+
+### Dynamic Industry Classification
+
+- No hardcoded industry lists
+- LLM generates specific industry names
+- Broad category for grouping
+- Industry description for context
+
+### Dynamic Extraction Templates
+
+- Industry-specific fields generated on-the-fly
+- Competitor focus tailored to industry
+- No manual template maintenance
+
+### Dynamic Query Categories
+
+- Company-specific query categories
+- Weighted distribution based on industry
+- Used by query generator agent
+- No hardcoded category lists
+
+### Parallel Scraping
+
+- Company and competitor pages scraped simultaneously
+- 40% faster when competitor URLs provided
+- LangGraph fan-out/fan-in pattern
 
 ## Related Documentation
 

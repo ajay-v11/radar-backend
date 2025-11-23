@@ -9,10 +9,7 @@ import logging
 import hashlib
 from typing import Optional, Dict, List
 
-from agents.industry_detector import detect_industry
-from agents.query_generator import generate_queries
-from agents.ai_model_tester import test_ai_models
-from agents.scorer_analyzer import analyze_score
+from agents.visibility_orchestrator import run_visibility_orchestration
 
 logger = logging.getLogger(__name__)
 
@@ -109,121 +106,74 @@ def execute_visibility_analysis(
     query_weights: Optional[dict] = None
 ) -> dict:
     """
-    Execute visibility analysis workflow (Phase 2 only).
+    Execute visibility analysis workflow using LangGraph orchestrator.
     
     Prerequisites: Company data from Phase 1 must be provided.
     
-    Steps:
-    1. Query generation (using company data from Phase 1)
-    2. Parallel batch testing
-    3. Final aggregation
+    Steps (orchestrated by LangGraph):
+    1. Query generation (using dynamic query_categories_template)
+    2. AI model testing (parallel)
+    3. Scoring and analysis
     
     Args:
         company_data: Company data from Phase 1 (/analyze/company)
+            Required fields: company_name, company_description, industry, 
+                           competitors, query_categories_template, target_region
         company_url: Company URL
         num_queries: Number of queries to generate
         models: List of AI models to test
         llm_provider: LLM provider for query generation
-        batch_size: Batch size for parallel testing
-        query_weights: Optional category weights
+        batch_size: Batch size (not used by new orchestrator)
+        query_weights: Optional category weights (not used by new orchestrator)
     
     Returns:
-        Complete analysis results
+        Complete analysis results with visibility score and detailed report
     """
-    # Initialize state with company data from Phase 1
-    state = {
-        "company_url": company_url,
-        "company_name": company_data.get("company_name", ""),
-        "company_description": company_data.get("company_description", ""),
-        "company_summary": company_data.get("company_summary", ""),
-        "industry": company_data.get("industry", "other"),
-        "competitors": company_data.get("competitors", []),
-        "competitors_data": company_data.get("competitors_data", []),
-        "errors": []
-    }
-    
     logger.info(f"Starting visibility analysis for {company_data.get('company_name')}")
     
-    # Step 1: Query Generation
-    logger.info(f"Step 1: Generating {num_queries} queries")
-    state["num_queries"] = num_queries
-    state = generate_queries(state, num_queries=num_queries, llm_provider=llm_provider)
+    # Validate required fields from Phase 1
+    required_fields = ["company_name", "industry", "competitors", "query_categories_template"]
+    missing_fields = [f for f in required_fields if f not in company_data]
+    if missing_fields:
+        raise ValueError(f"Missing required fields from Phase 1: {', '.join(missing_fields)}")
     
-    queries = state.get("queries", [])
-    
-    # Step 2: Parallel Batch Testing + Analysis
-    logger.info(f"Step 2: Testing {len(queries)} queries across {len(models)} models")
-    all_batch_responses = {model: [] for model in models}
-    all_analysis_results = []
-    
-    for batch_num, i in enumerate(range(0, len(queries), batch_size), 1):
-        batch_queries = queries[i:i+batch_size]
-        
-        # Test batch
-        batch_state = {
-            "queries": batch_queries,
-            "models": models,
-            "model_responses": {},
-            "errors": []
-        }
-        
-        batch_state = test_ai_models(batch_state)
-        batch_responses = batch_state.get("model_responses", {})
-        
-        # Store responses
-        for model in models:
-            if model in batch_responses:
-                all_batch_responses[model].extend(batch_responses[model])
-        
-        # Analyze batch
-        analysis_state = {
-            "company_name": state.get("company_name"),
-            "competitors": state.get("competitors", []),
-            "queries": batch_queries,
-            "query_categories": state.get("query_categories", {}),
-            "model_responses": batch_responses,
-            "errors": []
-        }
-        
-        analysis_state = analyze_score(analysis_state)
-        batch_report = analysis_state.get("analysis_report", {})
-        
-        batch_analysis = {
-            "batch_num": batch_num,
-            "visibility_score": analysis_state.get("visibility_score", 0),
-            "total_mentions": batch_report.get("total_mentions", 0),
-            "mention_rate": batch_report.get("mention_rate", 0),
-            "by_model": batch_report.get("by_model", {}),
-            "by_category": batch_report.get("by_category", {}),
-        }
-        
-        all_analysis_results.append(batch_analysis)
-        logger.info(f"Batch {batch_num}: score={batch_analysis['visibility_score']:.1f}%, mentions={batch_analysis['total_mentions']}")
-    
-    # Step 3: Final Aggregation
-    logger.info("Step 3: Aggregating results")
-    final_state = {
-        "company_name": state.get("company_name"),
-        "competitors": state.get("competitors", []),
-        "queries": queries,
-        "query_categories": state.get("query_categories", {}),
-        "model_responses": all_batch_responses,
-        "errors": []
+    # Prepare company data for orchestrator
+    orchestrator_input = {
+        "company_url": company_url,
+        "company_name": company_data["company_name"],
+        "company_description": company_data.get("company_description", ""),
+        "company_summary": company_data.get("company_summary", company_data.get("company_description", "")),
+        "industry": company_data["industry"],
+        "target_region": company_data.get("target_region", "United States"),  # Default to US if not provided
+        "competitors": company_data["competitors"],
+        "query_categories_template": company_data["query_categories_template"]
     }
     
-    final_state = analyze_score(final_state)
-    final_report = final_state.get("analysis_report", {})
+    # Run the new LangGraph orchestrator
+    result = run_visibility_orchestration(
+        company_data=orchestrator_input,
+        num_queries=num_queries,
+        models=models,
+        llm_provider=llm_provider
+    )
     
-    # Build final result
+    # Format result to match expected structure
+    analysis_report = result.get("analysis_report", {})
+    
     final_result = {
-        "industry": state.get("industry"),
-        "company_name": state.get("company_name"),
-        "competitors": state.get("competitors", []),
-        "total_queries": len(queries),
-        "total_responses": sum(len(r) for r in all_batch_responses.values()),
-        "visibility_score": final_state.get("visibility_score", 0),
-        "analysis_report": final_report,
-        "batch_results": all_analysis_results
+        "industry": company_data["industry"],
+        "company_name": company_data["company_name"],
+        "competitors": company_data["competitors"],
+        "total_queries": len(result.get("queries", [])),
+        "total_responses": sum(len(r) for r in result.get("model_responses", {}).values()),
+        "visibility_score": result.get("visibility_score", 0),
+        "analysis_report": analysis_report,
+        "queries": result.get("queries", []),
+        "query_categories": result.get("query_categories", {}),
+        "model_responses": result.get("model_responses", {}),
+        "errors": result.get("errors", [])
     }
+    
+    logger.info(f"✅ Visibility analysis complete: {final_result['visibility_score']:.1f}% visibility")
     
     return final_result
