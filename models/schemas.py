@@ -12,6 +12,20 @@ from typing_extensions import TypedDict
 
 # API Request/Response Models
 
+class CompetitorInput(BaseModel):
+    """Model for competitor input with optional URL."""
+    name: str = Field(
+        ...,
+        description="Competitor company name",
+        examples=["Blue Apron"]
+    )
+    url: Optional[HttpUrl] = Field(
+        None,
+        description="Competitor website URL (optional)",
+        examples=["https://blueapron.com"]
+    )
+
+
 class AnalyzeRequest(BaseModel):
     """Request model for the /analyze endpoint."""
     company_url: HttpUrl = Field(
@@ -28,6 +42,15 @@ class AnalyzeRequest(BaseModel):
         None,
         description="Brief description of the company and its business",
         examples=["Meal kit delivery service"]
+    )
+    competitors: Optional[List[CompetitorInput]] = Field(
+        None,
+        description="List of competitors with optional URLs (max 4)",
+        max_length=4,
+        examples=[[
+            {"name": "Blue Apron", "url": "https://blueapron.com"},
+            {"name": "EveryPlate", "url": "https://everyplate.com"}
+        ]]
     )
     models: Optional[List[str]] = Field(
         None,
@@ -104,7 +127,15 @@ class WorkflowState(TypedDict, total=False):
     company_summary: str  # AI-generated summary from scraped content
     scraped_content: str  # Raw scraped content from Firecrawl
     industry: str
+    product_category: str  # Specific product/service category (e.g., "meal kit subscription")
+    market_keywords: List[str]  # Keywords customers use when searching
+    target_audience: str  # Description of primary target customers
+    brand_positioning: Dict[str, Any]  # Value prop, differentiators, price positioning
+    buyer_intent_signals: Dict[str, Any]  # Common questions, decision factors, pain points
+    industry_specific: Dict[str, Any]  # Industry-specific extracted fields
     competitors: List[str]  # List of competitor names
+    competitors_data: List[Dict[str, Any]]  # Rich competitor data with price_tier, positioning, etc.
+    competitor_urls: Dict[str, str]  # Optional user-provided competitor URLs {name: url}
     queries: List[str]
     models: List[str]  # List of AI models to test
     model_responses: Dict[str, List[str]]  # {model_name: [response1, response2, ...]}

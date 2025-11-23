@@ -180,21 +180,25 @@ def execute_visibility_analysis(
             "company_name": state.get("company_name"),
             "competitors": state.get("competitors", []),
             "queries": batch_queries,
+            "query_categories": state.get("query_categories", {}),
             "model_responses": batch_responses,
             "errors": []
         }
         
         analysis_state = analyze_score(analysis_state)
+        batch_report = analysis_state.get("analysis_report", {})
         
         batch_analysis = {
             "batch_num": batch_num,
             "visibility_score": analysis_state.get("visibility_score", 0),
-            "total_mentions": analysis_state.get("analysis_report", {}).get("total_mentions", 0),
-            "by_model": analysis_state.get("analysis_report", {}).get("by_model", {}),
+            "total_mentions": batch_report.get("total_mentions", 0),
+            "mention_rate": batch_report.get("mention_rate", 0),
+            "by_model": batch_report.get("by_model", {}),
+            "by_category": batch_report.get("by_category", {}),
         }
         
         all_analysis_results.append(batch_analysis)
-        logger.info(f"Batch {batch_num}: score={batch_analysis['visibility_score']:.1f}%")
+        logger.info(f"Batch {batch_num}: score={batch_analysis['visibility_score']:.1f}%, mentions={batch_analysis['total_mentions']}")
     
     # Step 3: Final Aggregation
     logger.info("Step 3: Aggregating results")
@@ -202,6 +206,7 @@ def execute_visibility_analysis(
         "company_name": state.get("company_name"),
         "competitors": state.get("competitors", []),
         "queries": queries,
+        "query_categories": state.get("query_categories", {}),
         "model_responses": all_batch_responses,
         "errors": []
     }

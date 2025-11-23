@@ -180,17 +180,27 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest):
             query_weights=request.query_weights
         )
         
-        # Stream progress events
+        analysis_report = final_result.get("analysis_report", {})
+        
+        # Stream progress events with enhanced data
         yield emit("step2", "completed", {
             "total_queries": final_result.get("total_queries"),
-        }, f"Generated {final_result.get('total_queries')} queries")
+            "categories": list(analysis_report.get("by_category", {}).keys())
+        }, f"Generated {final_result.get('total_queries')} queries across {len(analysis_report.get('by_category', {}))} categories")
         
-        yield emit("step3", "completed", message="Model testing completed")
+        yield emit("step3", "completed", {
+            "total_responses": final_result.get("total_responses"),
+            "models_tested": list(analysis_report.get("by_model", {}).keys())
+        }, f"Tested {final_result.get('total_responses')} responses across {len(request.models)} models")
         
         yield emit("step4", "completed", {
             "visibility_score": final_result.get("visibility_score", 0),
-            "total_mentions": final_result.get("analysis_report", {}).get("total_mentions", 0),
-        }, "Scoring completed")
+            "total_mentions": analysis_report.get("total_mentions", 0),
+            "mention_rate": analysis_report.get("mention_rate", 0),
+            "top_competitors": [
+                comp["name"] for comp in analysis_report.get("competitor_rankings", {}).get("overall", [])[:3]
+            ]
+        }, "Scoring completed with enhanced analytics")
         
         # Cache the results
         cache_complete_flow(
