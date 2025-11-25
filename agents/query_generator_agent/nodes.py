@@ -145,40 +145,42 @@ def _generate_queries_for_category(
         return []
     
     try:
+        # Build context WITHOUT brand names
         context = f"""Industry: {industry}
-Company: {company_name}
 Description: {company_description or company_summary or "Not provided"}"""
-        
-        if competitors:
-            context += f"\nMain Competitors: {', '.join(competitors[:MAX_COMPETITORS_IN_CONTEXT])}"
         
         category_name = category_info.get("name", category_key)
         category_description = category_info.get("description", "")
         category_examples = category_info.get("examples", [])
         
-        prompt = f"""Generate {num_queries} search queries for the "{category_name}" category.
+        # Request extra queries to account for filtering
+        num_queries_to_generate = int(num_queries * 1.5)  # Generate 50% more to account for filtering
+        
+        prompt = f"""Generate {num_queries_to_generate} search queries for the "{category_name}" category.
 
 Category Description: {category_description}
 Category Examples: {', '.join(category_examples)}
 
-Company Context:
+Industry Context:
 {context}
 
-CRITICAL REQUIREMENTS:
-1. Generate exactly {num_queries} unique queries
+🚨 CRITICAL REQUIREMENTS - READ CAREFULLY:
+1. Generate exactly {num_queries_to_generate} unique queries
 2. Queries should represent real user search intent in 2025
 3. Make queries specific to the {industry} industry
-4. **ABSOLUTELY NO BRAND NAMES** - Do not mention "{company_name}" or ANY competitor names
-5. All queries must be completely GENERIC and open-ended
-6. Use natural language that real users would type
-7. Vary query length and style (questions, phrases, statements)
-8. Focus on buyer intent and decision-making queries
-9. For comparison queries, use phrases like:
+4. **ABSOLUTELY NO BRAND NAMES ALLOWED** - Zero tolerance policy
+5. Do NOT mention ANY company names, brand names, or specific business names
+6. All queries must be 100% GENERIC and open-ended
+7. Use natural language that real users would type
+8. Vary query length and style (questions, phrases, statements)
+9. Focus on buyer intent and decision-making queries
+10. For comparison queries, use ONLY generic phrases like:
    - "best sites for..."
    - "top platforms to..."
    - "compare online stores for..."
    - "which website is better for..."
-   - "list of best e-commerce sites for..."
+   - "list of best services for..."
+   - "where to find..."
 
 GOOD EXAMPLES (100% generic, no brand names):
 ✅ "best online marketplace for electronics"
@@ -189,19 +191,22 @@ GOOD EXAMPLES (100% generic, no brand names):
 ✅ "list of best sites to buy home appliances"
 ✅ "customer reviews for online shopping platforms"
 ✅ "most reliable e-commerce sites for electronics"
+✅ "affordable meal kit delivery services"
+✅ "best grocery delivery apps"
 
-BAD EXAMPLES (any brand mention):
-❌ "Flipkart customer reviews" (mentions our brand)
-❌ "Amazon smartphone deals" (mentions competitor)
-❌ "Amazon vs Snapdeal comparison" (mentions competitors)
-❌ "Myntra vs Ajio fashion" (mentions competitors)
-❌ "best deals on Amazon" (mentions competitor)
+BAD EXAMPLES (contain brand names - NEVER DO THIS):
+❌ "Flipkart customer reviews"
+❌ "Amazon smartphone deals"
+❌ "Amazon vs Snapdeal comparison"
+❌ "Myntra vs Ajio fashion"
+❌ "HelloFresh meal kits"
+❌ "Blue Apron reviews"
 
 Return ONLY a JSON array of query strings:
 ["query 1", "query 2", ...]"""
 
         messages = [
-            SystemMessage(content=f"You are an expert SEO and search intent analyst. Generate realistic search queries that users would type when searching for products/services in the {industry} industry. CRITICAL: Do NOT mention ANY brand names (including '{company_name}' or competitors like {', '.join(competitors[:3])}). All queries must be 100% generic. Always respond with valid JSON array."),
+            SystemMessage(content=f"You are an expert SEO and search intent analyst. Generate realistic search queries that users would type when searching for products/services in the {industry} industry. CRITICAL RULE: Do NOT mention ANY brand names, company names, or specific business names whatsoever. All queries must be 100% generic. Always respond with valid JSON array."),
             HumanMessage(content=prompt)
         ]
         
@@ -261,15 +266,38 @@ Return ONLY a JSON array of query strings:
             logger.error(error_msg)
             return []
         
+        # Build list of brand names to filter out (case-insensitive)
+        brand_names_to_filter = [company_name.lower()]
+        for competitor in competitors:
+            brand_names_to_filter.append(competitor.lower())
+        
         cleaned_queries = []
+        filtered_count = 0
+        
         for q in queries:
-            if isinstance(q, str) and q.strip():
-                cleaned_queries.append(q.strip())
-            else:
+            if not isinstance(q, str) or not q.strip():
                 logger.warning(f"Skipping invalid query in {category_key}: {q}")
+                continue
+            
+            query_lower = q.strip().lower()
+            
+            # Check if query contains any brand names
+            contains_brand = False
+            for brand in brand_names_to_filter:
+                if brand in query_lower:
+                    contains_brand = True
+                    filtered_count += 1
+                    logger.warning(f"🚫 Filtered query containing brand '{brand}': {q.strip()}")
+                    break
+            
+            if not contains_brand:
+                cleaned_queries.append(q.strip())
+        
+        if filtered_count > 0:
+            logger.warning(f"⚠️ Filtered out {filtered_count} queries containing brand names in {category_key}")
         
         if len(cleaned_queries) < num_queries:
-            logger.warning(f"Generated only {len(cleaned_queries)}/{num_queries} valid queries for {category_key}")
+            logger.warning(f"Generated only {len(cleaned_queries)}/{num_queries} valid queries for {category_key} (after filtering)")
         
         return cleaned_queries[:num_queries]
         

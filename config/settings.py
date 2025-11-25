@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     # Choose which provider to use for different tasks
     # Options: "openai", "claude", "gemini", "llama", "grok", "deepseek"
-    INDUSTRY_ANALYSIS_PROVIDER: str = "claude"  # Provider for industry detection & analysis
+    INDUSTRY_ANALYSIS_PROVIDER: str = "openai"  # Provider for industry detection & analysis
     QUERY_GENERATION_PROVIDER: str = "claude"   # Provider for query generation
     
     # Model Settings - Cost-effective models

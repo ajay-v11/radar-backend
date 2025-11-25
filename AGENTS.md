@@ -231,7 +231,7 @@ visibility_score = (total_mentions / (num_queries × num_models)) × 100
 
 ```bash
 # LLM Providers
-INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai, grok, deepseek
+INDUSTRY_ANALYSIS_PROVIDER=openai  # claude, gemini, llama, openai, grok, deepseek
 QUERY_GENERATION_PROVIDER=claude
 
 # API Keys

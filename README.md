@@ -180,7 +180,7 @@ curl -X POST http://localhost:8000/analyze/visibility \
 
 ```bash
 # LLM Provider (choose one)
-INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai
+INDUSTRY_ANALYSIS_PROVIDER=openai  # claude, gemini, llama, openai
 QUERY_GENERATION_PROVIDER=claude
 
 # API Keys (at least one required)

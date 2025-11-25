@@ -240,7 +240,7 @@ redis-cli ping
 
 ```bash
 # LLM Provider
-INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai
+INDUSTRY_ANALYSIS_PROVIDER=openai  # claude, gemini, llama, openai
 QUERY_GENERATION_PROVIDER=claude
 
 # API Keys (at least one required)
