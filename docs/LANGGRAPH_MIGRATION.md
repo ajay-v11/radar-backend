@@ -328,7 +328,4 @@ print(len(result['queries']))
 
 ## Documentation
 
-- **Industry Detector**: `docs/AGENT_INDUSTRY_DETECTOR.md`
-- **Query Generator**: `docs/AGENT_QUERY_GENERATOR.md` (needs update)
-- **AI Model Tester**: `docs/AGENT_AI_MODEL_TESTER.md` (needs update)
-- **Scorer Analyzer**: `docs/AGENT_SCORER_ANALYZER.md` (needs update)
+See [AGENTS.md](../AGENTS.md) for complete agent documentation.

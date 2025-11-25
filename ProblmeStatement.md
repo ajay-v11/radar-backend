@@ -19,22 +19,21 @@ The system will:
 
 ---
 
-## 🧩 Inputs & Outputs
+## Inputs & Outputs
 
-### **Input**
+**Input:**
 
-- **Brand Name**
-- **Website URL**
+- Company website URL
+- Optional: Company name, target region
 
-### **Output**
+**Output:**
 
-A **Comprehensive AI Visibility Report** with:
-
-- Overall visibility score (0–100%)
-- Breakdown by query type
-- Competitor ranking by mentions
-- Full query log (every single query tested)
-- Exportable CSV/Excel
+- Overall visibility score (0-100%)
+- Per-model breakdown
+- Per-category breakdown
+- Competitor rankings
+- Complete query log
+- Exportable CSV
 
 ---
 
@@ -173,30 +172,20 @@ Must show **all queries**, not summaries.
 
 ---
 
-## 📤 Required Deliverables
+## Deliverables
 
-Your system must output:
+- Overall AI visibility score (0-100%)
+- Per-category breakdown
+- Per-model breakdown
+- Competitor rankings
+- Complete query log (all queries)
+- Multi-model comparison
+- Exportable CSV
+- Clear, structured report
 
-- [x] Overall AI visibility score
-- [x] Breakdown by category
-- [x] Competitor rankings
-- [x] **A complete query log (all 50–100 queries)**
-- [x] Multi-model comparison
-- [x] Exportable CSV/Excel
-- [x] Clear, structured report
+## Optional Enhancements
 
----
-
-## 🛠️ Additional Optional Enhancements
-
-- Sentiment analysis of mentions
+- Sentiment analysis
 - Historical tracking
-- Intent classification
 - Query clustering
-- Model-to-model visibility comparisons
-
----
-
-# ✅ End of Specification
-
-This markdown file defines the full scope required to build an AI Visibility Score system.
+- Model-to-model comparisons

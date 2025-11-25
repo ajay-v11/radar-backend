@@ -1,8 +1,8 @@
-# AI Visibility Scoring System - Documentation
+# Documentation
 
 ## Overview
 
-The AI Visibility Scoring System analyzes how frequently companies are mentioned by AI models when users search for industry-related queries. The system uses a two-phase workflow with intelligent multi-level caching to provide fast, accurate visibility scores.
+Two-phase workflow with LangGraph agents for analyzing company visibility across AI models.
 
 ## Quick Start
 
@@ -52,22 +52,13 @@ uvicorn src.app:app --reload
 
 ## Documentation Structure
 
-### Core Documentation
-
-| Document                               | Description                                                 |
-| -------------------------------------- | ----------------------------------------------------------- |
-| [ARCHITECTURE.md](./ARCHITECTURE.md)   | High-level system architecture, data flow, technology stack |
-| [ORCHESTRATION.md](./ORCHESTRATION.md) | Workflow orchestration, agent coordination, flow diagrams   |
-| [API_ENDPOINTS.md](./API_ENDPOINTS.md) | Complete API reference with examples                        |
-
-### Agent Documentation
-
-| Agent   | Document                                                   | Purpose                                                      |
-| ------- | ---------------------------------------------------------- | ------------------------------------------------------------ |
-| Agent 1 | [AGENT_INDUSTRY_DETECTOR.md](./AGENT_INDUSTRY_DETECTOR.md) | Web scraping, industry classification, competitor extraction |
-| Agent 2 | [AGENT_QUERY_GENERATOR.md](./AGENT_QUERY_GENERATOR.md)     | Industry-specific query generation with LLM                  |
-| Agent 3 | [AGENT_AI_MODEL_TESTER.md](./AGENT_AI_MODEL_TESTER.md)     | Testing queries across multiple AI models                    |
-| Agent 4 | [AGENT_SCORER_ANALYZER.md](./AGENT_SCORER_ANALYZER.md)     | Hybrid mention detection and visibility scoring              |
+| Document                                                         | Description                                |
+| ---------------------------------------------------------------- | ------------------------------------------ |
+| [ARCHITECTURE.md](./ARCHITECTURE.md)                             | System design, data flow, caching strategy |
+| [API_ENDPOINTS.md](./API_ENDPOINTS.md)                           | API reference with examples                |
+| [LLM_PROVIDER_CONFIGURATION.md](./LLM_PROVIDER_CONFIGURATION.md) | LLM provider setup                         |
+| [API_STREAMING_STRUCTURE.md](./API_STREAMING_STRUCTURE.md)       | SSE streaming format                       |
+| [CSV_EXPORT.md](./CSV_EXPORT.md)                                 | CSV export feature                         |
 
 ## System Architecture
 
@@ -75,24 +66,22 @@ uvicorn src.app:app --reload
 
 ```
 Phase 1: Company Analysis
-    └─> Industry Detector Agent
-        └─> Output: Company profile with competitors
+    └─> Industry Detector Agent (LangGraph - 9 nodes)
 
-Phase 2: Complete Visibility Flow
-    ├─> Industry Detector (reuses Phase 1 cache)
-    ├─> Query Generator
-    ├─> AI Model Tester (parallel batches)
-    └─> Scorer Analyzer
-        └─> Output: Visibility score + detailed report
+Phase 2: Visibility Analysis
+    └─> Visibility Orchestrator (LangGraph - 7 nodes)
+        ├─> Query Generator (per category)
+        ├─> AI Model Tester (parallel)
+        └─> Scorer Analyzer (hybrid matching)
 ```
 
 ### Key Features
 
-- **Multi-Level Caching**: 4 cache layers (industry, queries, responses, complete flow)
-- **Smart Caching**: Granular cache keys for optimal reuse
-- **Hybrid Matching**: Exact + semantic mention detection
-- **Parallel Processing**: Batch testing for efficiency
-- **Streaming Updates**: Real-time progress via SSE
+- **LangGraph Workflows**: Modular, observable agent workflows
+- **4-Level Caching**: Scraping (24hr), Industry (24hr), Queries (24hr), Responses (1hr)
+- **Hybrid Matching**: Exact + semantic via ChromaDB
+- **Category-Based Batching**: Progressive results per category
+- **SSE Streaming**: Real-time progress updates
 
 ## API Usage
 
@@ -101,57 +90,31 @@ Phase 2: Complete Visibility Flow
 ```bash
 curl -X POST http://localhost:8000/analyze/company \
   -H "Content-Type: application/json" \
-  -d '{
-    "company_url": "https://hellofresh.com",
-    "company_name": "HelloFresh"
-  }'
+  -d '{"company_url": "https://hellofresh.com"}'
+# Returns: slug_id (e.g., "company_abc123")
 ```
 
-**Response (cached)**:
-
-```json
-{
-  "cached": true,
-  "data": {
-    "industry": "food_services",
-    "company_name": "HelloFresh",
-    "competitors": ["Blue Apron", "Home Chef", "Sun Basket"],
-    "company_description": "...",
-    "company_summary": "..."
-  }
-}
-```
-
-### Phase 2: Complete Visibility Analysis
+### Phase 2: Visibility Analysis
 
 ```bash
 curl -X POST http://localhost:8000/analyze/visibility \
   -H "Content-Type: application/json" \
   -d '{
-    "company_url": "https://hellofresh.com",
+    "company_slug_id": "company_abc123",
     "num_queries": 20,
-    "models": ["chatgpt", "gemini"],
-    "llm_provider": "gemini",
-    "batch_size": 5
+    "models": ["llama", "gemini"]
   }'
+# Returns: SSE stream with visibility_score, model_scores, category_breakdown
 ```
-
-**Response**: Server-Sent Events stream with real-time progress
 
 ## Performance
 
-### Latency
+| Scenario   | Phase 1 | Phase 2 | Total    |
+| ---------- | ------- | ------- | -------- |
+| Cold cache | 5-10s   | 30-60s  | 35-70s   |
+| Warm cache | 10-50ms | 10-50ms | 20-100ms |
 
-| Scenario      | Phase 1 | Phase 2 | Total    |
-| ------------- | ------- | ------- | -------- |
-| Cold cache    | 5-10s   | 30-60s  | 35-70s   |
-| Warm cache    | 10-50ms | 10-50ms | 20-100ms |
-| Partial cache | 2-3s    | 15-40s  | 17-43s   |
-
-### Cost Optimization
-
-- **Without caching**: ~$0.10-0.50 per analysis
-- **With caching**: ~$0.03-0.15 per analysis (70% savings)
+**Cost Optimization**: 70% savings with 4-level caching
 
 ## Technology Stack
 
@@ -164,41 +127,32 @@ curl -X POST http://localhost:8000/analyze/visibility \
 
 ## Supported AI Models
 
-| Model    | Provider   | Cost     | Notes                 |
-| -------- | ---------- | -------- | --------------------- |
-| ChatGPT  | OpenAI     | Low      | gpt-3.5-turbo         |
-| Gemini   | Google     | Very Low | gemini-2.5-flash-lite |
-| Claude   | Anthropic  | Low      | claude-3-haiku        |
-| Llama    | Groq       | Free     | llama-3.1-8b-instant  |
-| Grok     | OpenRouter | Low      | grok-4.1-fast         |
-| DeepSeek | OpenRouter | Free     | deepseek-chat-v3      |
+| Model    | Provider   | Cost     | Model Name                |
+| -------- | ---------- | -------- | ------------------------- |
+| ChatGPT  | OpenAI     | Low      | gpt-3.5-turbo             |
+| Gemini   | Google     | Very Low | gemini-2.5-flash-lite     |
+| Claude   | Anthropic  | Low      | claude-3-5-haiku-20241022 |
+| Llama    | Groq       | **FREE** | llama-3.1-8b-instant      |
+| Grok     | OpenRouter | Low      | grok-4.1-fast             |
+| DeepSeek | OpenRouter | **FREE** | deepseek-chat-v3          |
 
-## Supported Industries
+## Dynamic Industry Classification
 
-1. **technology**: Software, SaaS, AI, cloud, apps, IT services
-2. **retail**: E-commerce, stores, fashion, consumer goods
-3. **healthcare**: Medical services, pharmaceuticals, biotech
-4. **finance**: Banking, fintech, payments, insurance
-5. **food_services**: Restaurants, meal delivery, catering
-6. **other**: Default fallback category
+No hardcoded industries - LLM generates specific classifications (e.g., "AI-Powered Meal Kit Delivery" not "food_services")
 
 ## Caching Strategy
 
-### Cache Layers
+### Slug-Based Caching
 
-| Layer             | Key                          | TTL  | Purpose                  |
-| ----------------- | ---------------------------- | ---- | ------------------------ |
-| Industry Analysis | `company_url`                | 24hr | Complete company profile |
-| Queries           | `url+industry+count`         | 24hr | Generated queries        |
-| Model Responses   | `query+model`                | 1hr  | Individual AI responses  |
-| Complete Flow     | `url+queries+models+weights` | 24hr | Final aggregated results |
+| Phase   | Slug Format                                       | TTL  |
+| ------- | ------------------------------------------------- | ---- |
+| Phase 1 | `company_{hash(url + region)}`                    | 24hr |
+| Phase 2 | `visibility_{hash(url + queries + models + llm)}` | 24hr |
 
-### Cache Behavior
+**Cache Behavior:**
 
-**Same everything** → Instant cached results (~10-50ms)
-**Only models changed** → Reuses queries, re-runs tests
-**Only num_queries changed** → Reuses industry, regenerates queries
-**Query weights changed** → Re-runs everything (future feature)
+- Same params → Instant results (10-50ms)
+- Different params → New analysis, new slug_id
 
 ## Database Setup
 
@@ -285,15 +239,15 @@ redis-cli ping
 ### Environment Variables
 
 ```bash
-# AI Models
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-ANTHROPIC_API_KEY=...
-GROK_API_KEY=...
-OPEN_ROUTER_API_KEY=...
+# LLM Provider
+INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai
+QUERY_GENERATION_PROVIDER=claude
 
-# Web Scraping
-FIRECRAWL_API_KEY=...
+# API Keys (at least one required)
+ANTHROPIC_API_KEY=sk-ant-...       # Claude
+GROK_API_KEY=gsk_...               # Llama (FREE)
+GEMINI_API_KEY=...                 # Gemini
+FIRECRAWL_API_KEY=...              # Required
 
 # Databases
 CHROMA_HOST=localhost
@@ -302,25 +256,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-### Settings
-
-Edit `config/settings.py` to customize:
-
-```python
-# Model selection
-INDUSTRY_ANALYSIS_MODEL = "gpt-4-mini"
-CHATGPT_MODEL = "gpt-3.5-turbo"
-GEMINI_MODEL = "gemini-2.5-flash-lite"
-
-# Query generation
-MIN_QUERIES = 20
-MAX_QUERIES = 100
-DEFAULT_NUM_QUERIES = 20
-
-# Caching
-QUERY_CACHE_TTL = 86400  # 24 hours
-SCRAPE_CACHE_TTL = 86400  # 24 hours
-```
+See [LLM_PROVIDER_CONFIGURATION.md](./LLM_PROVIDER_CONFIGURATION.md) for details.
 
 ## Monitoring
 
@@ -349,69 +285,30 @@ Track in production:
 - Error rates per model
 - Cost per request
 
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 .
-├── agents/                    # Agent implementations
-│   ├── industry_detector.py
-│   ├── query_generator.py
-│   ├── ai_model_tester.py
-│   └── scorer_analyzer.py
+├── agents/                           # LangGraph agents
+│   ├── industry_detection_agent/     # Agent 1
+│   ├── query_generator_agent/        # Agent 2
+│   ├── ai_model_tester_agent/        # Agent 3
+│   ├── scorer_analyzer_agent/        # Agent 4
+│   └── visibility_orchestrator/      # Orchestrator
 ├── src/
-│   ├── app.py                # FastAPI application
-│   └── routes/
-│       ├── health_routes.py
-│       └── analysis_routes.py
-├── config/
-│   ├── settings.py           # Configuration
-│   └── database.py           # Database connections
-├── utils/                    # Utilities
-│   ├── competitor_matcher.py
-│   └── vector_store.py
-├── storage/
-│   └── rag_store.py          # Query templates
-├── models/
-│   └── schemas.py            # Data models
-├── tests/                    # Test suite
-└── docs/                     # Documentation
+│   ├── app.py                        # FastAPI app
+│   ├── routes/                       # API routes
+│   └── controllers/                  # Business logic
+├── config/                           # Configuration
+├── storage/                          # RAG store
+├── models/                           # Data models
+├── tests/                            # Tests
+└── docs/                             # Documentation
 ```
 
-### Adding a New AI Model
+## Documentation
 
-1. Add API key to `.env`
-2. Add model config to `config/settings.py`
-3. Implement query function in `agents/ai_model_tester.py`
-4. Update model list in documentation
-
-### Adding a New Industry
-
-1. Add industry to `VALID_INDUSTRIES` in `agents/industry_detector.py`
-2. Add keywords to `INDUSTRY_KEYWORDS`
-3. Add categories to `INDUSTRY_CATEGORIES` in `agents/query_generator.py`
-4. Update documentation
-
-## Support
-
-### Common Issues
-
-- [Troubleshooting Guide](./ARCHITECTURE.md#error-handling)
-- [Agent-Specific Issues](./AGENT_INDUSTRY_DETECTOR.md#common-issues)
-- [API Errors](./API_ENDPOINTS.md#error-handling)
-
-### Documentation
-
-- [Architecture Overview](./ARCHITECTURE.md)
-- [Workflow Orchestration](./ORCHESTRATION.md)
-- [API Reference](./API_ENDPOINTS.md)
-- [Agent Details](./AGENT_INDUSTRY_DETECTOR.md)
-
-## License
-
-[Your License Here]
-
-## Contributing
-
-[Your Contributing Guidelines Here]
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - System design
+- [API_ENDPOINTS.md](./API_ENDPOINTS.md) - API reference
+- [LLM_PROVIDER_CONFIGURATION.md](./LLM_PROVIDER_CONFIGURATION.md) - LLM setup
+- [AGENTS.md](../AGENTS.md) - Agent workflows

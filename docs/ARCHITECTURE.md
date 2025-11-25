@@ -1,8 +1,8 @@
-# AI Visibility Scoring System - Architecture
+# Architecture
 
 ## Overview
 
-The AI Visibility Scoring System analyzes how frequently companies are mentioned by AI models when users search for industry-related queries. The system uses a two-phase workflow with intelligent caching to provide fast, accurate visibility scores.
+Two-phase workflow with LangGraph agents, 4-level caching, and hybrid mention detection for fast, accurate visibility scoring.
 
 ## High-Level Architecture
 
@@ -453,11 +453,6 @@ Industry Detector
 
 ## Related Documentation
 
-- [AGENTS.md](../AGENTS.md) - Detailed agent documentation
+- [AGENTS.md](../AGENTS.md) - Agent workflows and details
 - [API_ENDPOINTS.md](./API_ENDPOINTS.md) - API reference
-- [ORCHESTRATION.md](./ORCHESTRATION.md) - Workflow orchestration details
-- Individual agent docs:
-  - [AGENT_INDUSTRY_DETECTOR.md](./AGENT_INDUSTRY_DETECTOR.md)
-  - [AGENT_QUERY_GENERATOR.md](./AGENT_QUERY_GENERATOR.md)
-  - [AGENT_AI_MODEL_TESTER.md](./AGENT_AI_MODEL_TESTER.md)
-  - [AGENT_SCORER_ANALYZER.md](./AGENT_SCORER_ANALYZER.md)
+- [LLM_PROVIDER_CONFIGURATION.md](./LLM_PROVIDER_CONFIGURATION.md) - LLM setup

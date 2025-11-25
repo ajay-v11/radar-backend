@@ -1,4 +1,4 @@
-# AI Visibility Scoring System - Agents Overview
+# Agents Overview
 
 ## System Architecture
 
@@ -301,8 +301,7 @@ curl -X POST http://localhost:8000/analyze/visibility \
 
 ## Documentation
 
-- `docs/ARCHITECTURE.md` - System design
-- `docs/API_ENDPOINTS.md` - API reference
-- `docs/LLM_PROVIDER_CONFIGURATION.md` - LLM setup
-- `docs/LANGGRAPH_MIGRATION.md` - LangGraph architecture
-- Individual agent docs in `docs/AGENT_*.md`
+- `docs/ARCHITECTURE.md` - System design and data flow
+- `docs/API_ENDPOINTS.md` - API reference with examples
+- `docs/LLM_PROVIDER_CONFIGURATION.md` - LLM provider setup
+- `docs/LANGGRAPH_MIGRATION.md` - LangGraph migration notes

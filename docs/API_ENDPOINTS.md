@@ -1,11 +1,12 @@
-# API Endpoints - Simplified Two-Phase Architecture
+# API Endpoints
 
 ## Overview
 
-The API has been streamlined into a clean two-phase workflow:
+Two-phase workflow with slug-based caching:
 
-1. **Phase 1: Company Analysis** - Analyze company, detect industry, identify competitors
-2. **Phase 2: Complete Flow** - Generate queries, test AI models, calculate visibility score
+1. **Phase 1: Company Analysis** - Returns `company_slug_id`
+2. **Phase 2: Visibility Analysis** - Uses `company_slug_id`, returns `visibility_slug_id`
+3. **Report Endpoints** - Use `visibility_slug_id` for detailed data
 
 ---
 
@@ -51,14 +52,9 @@ Health check status and version.
 
 ### `POST /analyze/company`
 
-Analyzes company website, detects industry, identifies competitors, and generates summary.
+Analyzes company website, detects industry dynamically, identifies competitors.
 
-**Why separate?**
-
-- Higher chance of failure (broken URLs, scraping issues)
-- Can be enhanced independently (user-provided competitors)
-- Results are reusable across multiple visibility analyses
-- Slug-based caching for instant subsequent calls
+**Why separate?** Reusable across multiple visibility analyses, slug-based caching (24hr).
 
 **Request:**
 
@@ -222,52 +218,31 @@ Use the `slug_id` from analysis responses to fetch detailed reports:
 
 ---
 
-## Frontend Integration Example
-
-### React/TypeScript Example
+## Frontend Integration
 
 ```typescript
-// Phase 1: Analyze Company
-async function analyzeCompany(companyUrl: string) {
-  const eventSource = new EventSource('/analyze/company');
-
-  eventSource.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    if (data.step === 'complete') {
-      console.log('Company analyzed:', data.slug_id);
-      console.log('Cached:', data.cached);
-      eventSource.close();
-      return data.slug_id; // Use this for Phase 2
-    }
-  };
-}
+// Phase 1: Company Analysis
+const eventSource = new EventSource('/analyze/company');
+eventSource.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.step === 'complete') {
+    const companySlugId = data.slug_id;
+    eventSource.close();
+  }
+};
 
 // Phase 2: Visibility Analysis
-async function runVisibilityAnalysis(companySlugId: string) {
-  const eventSource = new EventSource('/analyze/visibility');
-
-  eventSource.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    switch (data.step) {
-      case 'category_complete':
-        // Update per-category progress
-        console.log('Category:', data.data.category);
-        console.log('Partial score:', data.data.partial_visibility_score);
-        console.log('Per-model scores:', data.data.partial_model_scores);
-        break;
-      case 'complete':
-        // Final results
-        console.log('Final score:', data.data.visibility_score);
-        console.log('Model scores:', data.data.model_scores);
-        console.log('Slug ID:', data.data.slug_id);
-        console.log('Cached:', data.cached);
-        eventSource.close();
-        break;
-    }
-  };
-}
+const eventSource2 = new EventSource('/analyze/visibility');
+eventSource2.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (data.step === 'category_complete') {
+    // Update progress: data.data.partial_visibility_score
+  } else if (data.step === 'complete') {
+    // Final: data.data.visibility_score, data.data.model_scores
+    const visibilitySlugId = data.data.slug_id;
+    eventSource2.close();
+  }
+};
 ```
 
 ---
@@ -302,17 +277,17 @@ data: {"step": "error", "status": "failed", "data": {"error": "..."}, "message":
 
 ## Summary
 
-**Clean two-phase workflow:**
+**Two-phase workflow:**
 
 1. `POST /analyze/company` → Returns `company_slug_id`
 2. `POST /analyze/visibility` → Uses `company_slug_id`, returns `visibility_slug_id`
-3. `GET /report/{slug_id}` → Detailed analysis (optional)
-4. `POST /report/{slug_id}/query-log` → Query log with filters (optional)
+3. `GET /report/{slug_id}` → Full report (optional)
+4. `POST /report/{slug_id}/query-log` → Query log (optional)
+5. `GET /report/{slug_id}/export/csv` → CSV export (optional)
 
 **Key Features:**
 
-- ✅ Slug-based caching for predictable cache management
-- ✅ Identical response format for cache hits and misses
-- ✅ Per-model visibility scores with exact model names
-- ✅ Real-time streaming with progressive results
-- ✅ Category-based batching for better UX
+- Slug-based caching (24hr TTL)
+- SSE streaming with real-time progress
+- Per-model and per-category breakdowns
+- Category-based batching

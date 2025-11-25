@@ -1,12 +1,12 @@
 # 🎯 AI Visibility Scoring System
 
-> Measure how frequently companies are mentioned by AI models when users search for industry-related queries.
+> Measure how frequently AI models mention your company when users search for industry-related queries.
 
 ---
 
 ## 📌 A. Problem Statement
 
-**The Challenge**: Companies don't know if AI models like ChatGPT, Gemini, or Claude recommend them to potential customers. With 70%+ of users now asking AI for recommendations before searching Google, **AI visibility = brand awareness**.
+Companies don't know if AI models like ChatGPT, Gemini, or Claude recommend them to potential customers. With 70%+ of users now asking AI for recommendations, **AI visibility = brand awareness**.
 
 **Key Problems:**
 
@@ -18,28 +18,24 @@
 
 ## 📌 B. Solution Overview
 
-### Our Approach
+An **automated multi-agent system** using LangGraph workflows that:
 
-An **automated multi-agent system** that:
+1. **Analyzes Companies** - Scrapes websites, detects industry dynamically, identifies competitors
+2. **Generates Smart Queries** - Creates 20-100 realistic queries using dynamic categories
+3. **Tests AI Models** - Executes queries across 6 AI models (ChatGPT, Gemini, Claude, Llama, Grok, DeepSeek)
+4. **Calculates Visibility** - Uses hybrid exact + semantic matching via ChromaDB
+5. **Streams Results** - Real-time category-based progress updates
 
-1. **Analyzes Companies** - Scrapes websites, detects industry, identifies competitors
-2. **Generates Smart Queries** - Creates 20-100 realistic search queries
-3. **Tests AI Models** - Executes queries across ChatGPT, Gemini, Claude, Llama
-4. **Calculates Visibility** - Uses hybrid exact + semantic matching to detect mentions
-5. **Provides Insights** - Shows which models mention you and competitor context
-
-### Key Innovation: Hybrid Mention Detection
+**Key Innovation: Hybrid Mention Detection**
 
 - **Exact Matching**: Fast company name detection
-- **Semantic Matching**: RAG-based competitor detection using ChromaDB
-  - Catches variations: "meal kit service" → HelloFresh
-  - Identifies indirect mentions: "German sportswear brand" → Adidas
+- **Semantic Matching**: RAG-based via ChromaDB (catches "meal kit service" → HelloFresh)
 
-### Impact & Value
+**Impact & Value:**
 
 - 📊 Quantifiable visibility metrics (0-100% score)
-- 🎯 Competitive benchmarking
-- ⚡ 70% cost reduction with smart caching
+- 🎯 Per-model and per-category breakdowns
+- ⚡ 70% cost reduction with 4-level caching
 - 🚀 10-50ms response time on cached requests
 - 💰 Free tier available (Llama via Groq)
 
@@ -50,15 +46,32 @@ An **automated multi-agent system** that:
 ### System Architecture
 
 ```
-User Request → FastAPI → Orchestration Layer → Agents → Storage
-                                                  ↓
-                        Phase 1: Company Analysis
-                        └─> Industry Detector Agent
-
-                        Phase 2: Visibility Analysis
-                        ├─> Query Generator Agent
-                        ├─> AI Model Tester Agent
-                        └─> Scorer Analyzer Agent
+┌─────────────┐
+│   FastAPI   │
+│   Server    │
+└──────┬──────┘
+       │
+       ▼
+┌─────────────────────────────────────┐
+│  Two-Phase Workflow                 │
+│                                     │
+│  Phase 1: Company Analysis          │
+│    └─> Industry Detector Agent     │
+│                                     │
+│  Phase 2: Visibility Analysis       │
+│    └─> Visibility Orchestrator     │
+│        ├─> Query Generator          │
+│        ├─> AI Model Tester          │
+│        └─> Scorer Analyzer          │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────┐
+│  Storage Layer                       │
+│  ├─> ChromaDB (vectors, semantic)   │
+│  ├─> Redis (4-level caching)        │
+│  └─> RAG Store (query templates)    │
+└──────────────────────────────────────┘
 ```
 
 ### Agent Workflow
@@ -66,19 +79,21 @@ User Request → FastAPI → Orchestration Layer → Agents → Storage
 ```
 Company URL
     ↓
-[Agent 1] Industry Detector
-    → Scrape website, detect industry, identify competitors
+[Agent 1] Industry Detector (LangGraph - 9 nodes)
+    → Parallel scraping, dynamic classification, generate query categories
     ↓
-[Agent 2] Query Generator
-    → Generate 20-100 industry-specific queries
+[Orchestrator] Visibility Orchestrator (LangGraph - 7 nodes with looping)
     ↓
-[Agent 3] AI Model Tester
-    → Test queries on ChatGPT, Gemini, Claude, Llama
+[Agent 2] Query Generator (per category)
+    → Generate queries using dynamic templates
     ↓
-[Agent 4] Scorer Analyzer
-    → Hybrid matching, calculate visibility score
+[Agent 3] AI Model Tester (parallel batching)
+    → Test across 6 AI models
     ↓
-Visibility Score + Report
+[Agent 4] Scorer Analyzer (hybrid matching)
+    → Calculate visibility score
+    ↓
+Visibility Score + Detailed Report
 ```
 
 ---
@@ -86,9 +101,10 @@ Visibility Score + Report
 ## 📌 D. Tech Stack
 
 **Backend**: FastAPI, Python 3.11+, Pydantic  
-**AI/LLM**: LangChain, OpenAI, Gemini, Claude, Llama (Groq - FREE)  
-**Vector DB**: ChromaDB, OpenAI Embeddings  
-**Caching**: Redis (24hr industry, 1hr responses)  
+**AI Framework**: LangGraph (modular workflows), LangChain  
+**LLM Providers**: Claude, Gemini, Llama (Groq), OpenAI, Grok, DeepSeek  
+**Vector DB**: ChromaDB (semantic search, embeddings)  
+**Caching**: Redis (4-level: scraping 24hr, industry 24hr, queries 24hr, responses 1hr)  
 **Scraping**: Firecrawl API  
 **Infrastructure**: Docker Compose, Uvicorn
 
@@ -101,107 +117,84 @@ Visibility Score + Report
 ```bash
 # 1. Clone and install
 git clone <repo-url>
-cd fastapi-app
+cd ai-visibility-scoring
 uv sync  # or: pip install -r requirements.txt
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env and add API keys
+# Edit .env and add API keys (see section F below)
 
 # 3. Start databases
 docker-compose up -d
 
 # 4. Run server
-uvicorn src.app:app --reload --port 8000
+python run_server.py
+# Or: uvicorn src.app:app --reload --port 8000
 
 # 5. Access
-# API: http://localhost:8000/docs
-# Demo: Open demo.html in browser
+# API Docs: http://localhost:8000/docs
+# Health: http://localhost:8000/health
 ```
 
-### Test the System
+### API Usage
 
 ```bash
-python tests/test_all_models.py  # Test AI models
-python tests/test_clients.py     # Test databases
+# Phase 1: Analyze company
+curl -X POST http://localhost:8000/analyze/company \
+  -H "Content-Type: application/json" \
+  -d '{"company_url": "https://hellofresh.com"}'
+# Returns: slug_id (e.g., "company_abc123")
+
+# Phase 2: Visibility analysis
+curl -X POST http://localhost:8000/analyze/visibility \
+  -H "Content-Type: application/json" \
+  -d '{
+    "company_slug_id": "company_abc123",
+    "num_queries": 20,
+    "models": ["llama", "gemini"]
+  }'
+# Returns: visibility_score, model_scores, category_breakdown
 ```
 
 ---
 
-## 📌 F. LLM Provider Configuration
+## 📌 F. API Keys / Configuration
 
-### 🎯 Easy Provider Switching
+### Required API Keys
 
-The system uses a **centralized LLM provider system**. Switch providers in one line:
+**Minimum (choose one):**
 
-```bash
-# Quick switch (recommended)
-python switch_provider.py claude
-
-# Or edit .env directly
-INDUSTRY_ANALYSIS_PROVIDER=claude
-QUERY_GENERATION_PROVIDER=claude
-```
-
-### Supported Providers
-
-| Provider   | Model                 | Cost     | Speed     | Recommended For      |
-| ---------- | --------------------- | -------- | --------- | -------------------- |
-| **claude** | Claude 3.5 Haiku      | Low      | Fast      | ✅ **Best overall**  |
-| **llama**  | Llama 3.1 8B (Groq)   | **FREE** | Very Fast | 💰 **Budget option** |
-| **gemini** | Gemini 2.5 Flash Lite | Low      | Fast      | Good alternative     |
-| openai     | GPT-4o-mini           | Medium   | Medium    | Requires credits     |
-| grok       | Grok 4.1 Fast         | Medium   | Fast      | Via OpenRouter       |
-| deepseek   | DeepSeek v3           | **FREE** | Fast      | Via OpenRouter       |
-
-### API Keys
-
-**Minimum Required (Choose One):**
-
-| Service       | Purpose                 | Get Key                                                           | Cost      |
-| ------------- | ----------------------- | ----------------------------------------------------------------- | --------- |
-| **Anthropic** | Claude (Recommended)    | [console.anthropic.com](https://console.anthropic.com)            | Low cost  |
-| **Groq**      | Llama (FREE)            | [console.groq.com](https://console.groq.com/keys)                 | FREE      |
-| **Gemini**    | Gemini                  | [makersuite.google.com](https://makersuite.google.com/app/apikey) | FREE tier |
-| **Firecrawl** | Web scraping (Required) | [firecrawl.dev](https://firecrawl.dev)                            | FREE tier |
+| Service       | Purpose              | Get Key                                                           | Cost      |
+| ------------- | -------------------- | ----------------------------------------------------------------- | --------- |
+| **Anthropic** | Claude (Recommended) | [console.anthropic.com](https://console.anthropic.com)            | Low cost  |
+| **Groq**      | Llama (FREE)         | [console.groq.com](https://console.groq.com/keys)                 | FREE      |
+| **Gemini**    | Gemini               | [makersuite.google.com](https://makersuite.google.com/app/apikey) | FREE tier |
+| **Firecrawl** | Web scraping         | [firecrawl.dev](https://firecrawl.dev)                            | FREE tier |
 
 **Optional (for testing AI models):**
 
-| Service    | Purpose         | Cost              |
-| ---------- | --------------- | ----------------- |
-| OpenAI     | ChatGPT testing | ~$0.002/1K tokens |
-| OpenRouter | Grok, DeepSeek  | Varies            |
+- OpenAI (ChatGPT testing)
+- OpenRouter (Grok, DeepSeek)
 
-**Environment Variables:**
+### Environment Variables
 
 ```bash
 # LLM Provider (choose one)
-INDUSTRY_ANALYSIS_PROVIDER=claude  # or: llama, gemini, openai
-QUERY_GENERATION_PROVIDER=claude   # or: llama, gemini, openai
+INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai
+QUERY_GENERATION_PROVIDER=claude
 
 # API Keys (at least one required)
-ANTHROPIC_API_KEY=sk-ant-...       # For Claude (Recommended)
+ANTHROPIC_API_KEY=sk-ant-...       # For Claude
 GROK_API_KEY=gsk_...               # For Llama (FREE)
 GEMINI_API_KEY=...                 # For Gemini
-FIRECRAWL_API_KEY=...              # Required for scraping
+FIRECRAWL_API_KEY=...              # Required
 
 # Optional
-OPENAI_API_KEY=sk-...              # For OpenAI
+OPENAI_API_KEY=sk-...              # For ChatGPT testing
 OPEN_ROUTER_API_KEY=sk-or-v1-...  # For Grok/DeepSeek
 ```
 
-**Quick Commands:**
-
-```bash
-# Test your configuration
-python test_llm_providers.py
-
-# Switch providers easily
-python switch_provider.py claude   # Switch to Claude
-python switch_provider.py llama    # Switch to Llama (free)
-```
-
-📖 **Detailed Guide**: See `docs/LLM_PROVIDER_CONFIGURATION.md`
+📖 **Detailed Guide**: See [docs/LLM_PROVIDER_CONFIGURATION.md](docs/LLM_PROVIDER_CONFIGURATION.md)
 
 ⚠️ **Never commit `.env` to version control!**
 
@@ -217,20 +210,23 @@ python switch_provider.py llama    # Switch to Llama (free)
 POST /analyze/company
 {
   "company_url": "https://hellofresh.com",
-  "company_name": "HelloFresh"
+  "target_region": "United States"
 }
 ```
 
-**Output:**
+**Output (SSE Stream):**
 
 ```json
 {
+  "step": "complete",
+  "status": "success",
+  "slug_id": "company_abc123",
   "cached": false,
   "data": {
     "company_name": "HelloFresh",
-    "industry": "food_services",
-    "company_description": "Meal kit delivery service...",
-    "competitors": ["Blue Apron", "Home Chef", "Sun Basket"]
+    "industry": "AI-Powered Meal Kit Delivery",
+    "competitors": ["Blue Apron", "Home Chef", "EveryPlate"],
+    "query_categories_template": {...}
   }
 }
 ```
@@ -242,79 +238,89 @@ POST /analyze/company
 ```json
 POST /analyze/visibility
 {
-  "company_url": "https://hellofresh.com",
+  "company_slug_id": "company_abc123",
   "num_queries": 20,
   "models": ["llama", "gemini"]
 }
 ```
 
-**Output:**
+**Output (SSE Stream - Final Event):**
 
 ```json
 {
-  "visibility_score": 75.5,
-  "total_queries": 20,
-  "total_mentions": 30,
-  "analysis_report": {
-    "by_model": {
-      "llama": {
-        "mentions": 16,
-        "mention_rate": 0.8,
-        "competitor_mentions": {"Blue Apron": 8}
-      },
-      "gemini": {
-        "mentions": 14,
-        "mention_rate": 0.7
-      }
+  "step": "complete",
+  "status": "success",
+  "slug_id": "visibility_xyz789",
+  "cached": false,
+  "data": {
+    "visibility_score": 45.5,
+    "model_scores": {
+      "llama-3.1-8b-instant": 50.0,
+      "gemini-2.5-flash-lite": 41.0
     },
-    "sample_mentions": ["Query: 'best meal kits' -> Llama mentioned company"]
+    "total_queries": 20,
+    "total_mentions": 10,
+    "category_breakdown": [
+      {
+        "category": "product_selection",
+        "score": 50.0,
+        "queries": 5,
+        "mentions": 3
+      }
+    ],
+    "model_category_matrix": {
+      "llama-3.1-8b-instant": {
+        "product_selection": 60.0,
+        "comparison": 40.0
+      }
+    }
   }
 }
 ```
 
+### Detailed Reports (Optional)
+
+```bash
+# Get full report with competitor rankings
+GET /report/visibility_xyz789
+
+# Get paginated query log
+POST /report/visibility_xyz789/query-log
+{
+  "page": 1,
+  "limit": 50,
+  "model": "llama"
+}
+
+# Export CSV
+GET /report/visibility_xyz789/export/csv
+```
+
 ---
 
-## 📌 H. Demo & Screenshots
-
-### 🎥 Video Demo
+## � H. uVideo Demo
 
 **[Video Demo Link - Coming Soon]**
-
-### Screenshots
-
-| Demo UI                       | API Docs                         | Performance                     |
-| ----------------------------- | -------------------------------- | ------------------------------- |
-| ![Demo](screenshots/demo.png) | ![API](screenshots/api-docs.png) | ![Cache](screenshots/cache.png) |
-
-_Company analysis, visibility scoring, and cache performance_
 
 ---
 
 ## 📚 Documentation
 
-Detailed docs in `/docs` folder:
-
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - System design
-- [API_ENDPOINTS.md](docs/API_ENDPOINTS.md) - API reference
-- [AGENTS.md](AGENTS.md) - Agent overview
+- [AGENTS.md](AGENTS.md) - Agent overview and workflows
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System design and data flow
+- [docs/API_ENDPOINTS.md](docs/API_ENDPOINTS.md) - Complete API reference
+- [docs/LLM_PROVIDER_CONFIGURATION.md](docs/LLM_PROVIDER_CONFIGURATION.md) - LLM setup guide
 
 ---
 
 ## 🚀 Performance
 
-- **Cached Response**: 10-50ms
-- **Cold Response**: 30-60s
-- **Cost Reduction**: 70%
-- **Cache Hit Rate**: 70%+
-- **Supported Models**: 6+
-- **Industries**: 6 categories
+- **Cached Response**: 10-50ms (instant)
+- **Cold Response**: 30-60s (20 queries × 2 models)
+- **Cost Reduction**: 70% with 4-level caching
+- **Supported Models**: 6 (ChatGPT, Gemini, Claude, Llama, Grok, DeepSeek)
+- **Dynamic Industries**: No hardcoded categories
 
 ---
 
-## 📧 Contact
-
-[Your Contact Information]
-
----
-
-**Built with ❤️ using FastAPI, LangChain, and ChromaDB**
+Built with FastAPI, LangGraph, and ChromaDB
