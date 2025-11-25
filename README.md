@@ -319,10 +319,6 @@ GET /report/visibility_xyz789/export/csv
 
 ---
 
-## � H. uVideo Demo
-
-**[Video Demo Link - Coming Soon]**
-
 ---
 
 ## 📚 Documentation
