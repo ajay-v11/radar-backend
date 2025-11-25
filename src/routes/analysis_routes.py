@@ -21,6 +21,7 @@ from src.controllers.cache_manager import (
     get_cached_by_slug,
     cache_by_slug
 )
+from src.utils.report_generator import generate_csv_report
 
 logger = logging.getLogger(__name__)
 
@@ -674,4 +675,67 @@ async def get_query_log(slug_id: str, request: QueryLogRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error fetching query log: {str(e)}"
+        )
+
+
+@report_router.get("/{slug_id}/export/csv")
+async def export_csv_report(slug_id: str):
+    """
+    Export complete visibility analysis as CSV file.
+    
+    Use the slug_id returned from POST /analyze/visibility.
+    
+    The CSV includes:
+    - Summary (company, industry, overall score)
+    - Model performance breakdown
+    - Category breakdown
+    - Competitor rankings
+    - Complete query log (all queries tested)
+    - Model-category performance matrix
+    
+    Example:
+    ```
+    GET /report/visibility_abc123def456/export/csv
+    ```
+    
+    Returns: CSV file download
+    """
+    try:
+        # Get cached analysis by slug
+        cached_result = get_cached_by_slug(slug_id)
+        
+        if not cached_result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No analysis found for slug_id: {slug_id}"
+            )
+        
+        # Generate CSV report
+        csv_content = generate_csv_report(cached_result)
+        
+        # Get company name for filename
+        company_name = cached_result.get("company_name", "company")
+        # Sanitize filename
+        safe_company_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in company_name)
+        filename = f"{safe_company_name}_visibility_report.csv"
+        
+        logger.info(f"Generated CSV report for {company_name} ({len(csv_content)} bytes)")
+        
+        from fastapi.responses import Response
+        
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating CSV report: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating CSV report: {str(e)}"
         )
