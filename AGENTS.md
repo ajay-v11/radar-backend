@@ -21,7 +21,7 @@ Phase 2: Visibility Analysis (Orchestrated)
 - **Category-Based Batching**: Visibility orchestrator processes queries by category with progressive results
 - **Dynamic Classification**: No hardcoded industries - LLM generates specific classifications
 - **Parallel Scraping**: Company and competitor pages scraped simultaneously
-- **Multi-Level Caching**: 4 cache layers (scraping, industry analysis, queries, model responses)
+- **Slug-Based Caching**: Simple route-level caching (24hr TTL)
 - **Hybrid Matching**: Exact + semantic mention detection using ChromaDB
 
 ---
@@ -34,15 +34,15 @@ Phase 2: Visibility Analysis (Orchestrated)
 
 **LangGraph Workflow** (9 nodes):
 
-1. Scrape company pages (parallel)
-2. Scrape competitor pages (parallel)
-3. Combine content
-4. Classify industry (pure LLM, no constraints)
-5. Generate extraction template
-6. Extract company data
-7. Generate query categories
-8. Enrich competitors
-9. Finalize
+1. `scrape_company_pages` - Scrape homepage + about page (parallel)
+2. `scrape_competitor_pages` - Scrape competitor homepages (parallel)
+3. `combine_scraped_content` - Combine all scraped content
+4. `classify_industry` - Dynamic LLM classification (no hardcoded list)
+5. `generate_extraction_template` - Create industry-specific template
+6. `extract_with_template` - Extract company data using template
+7. `generate_query_categories` - Generate custom query categories
+8. `enrich_competitors` - Enrich competitor data with scraped content
+9. `finalize` - Mark workflow complete
 
 **Key Features**:
 
@@ -60,7 +60,7 @@ Phase 2: Visibility Analysis (Orchestrated)
 - `extraction_template`, `product_category`, `market_keywords`
 - `target_audience`, `brand_positioning`, `buyer_intent_signals`
 
-**Cache**: 24hr TTL (scraping + analysis)
+**Cache**: 24hr TTL (complete analysis cached by slug)
 
 ---
 
@@ -72,11 +72,11 @@ Phase 2: Visibility Analysis (Orchestrated)
 
 **LangGraph Workflow** (5 nodes):
 
-1. Check cache
-2. Calculate distribution (weighted)
-3. Generate queries per category (LLM)
-4. Cache results
-5. Finalize
+1. `check_cache` - Check if queries already cached (skips generation if found)
+2. `calculate_distribution` - Calculate weighted query distribution across categories
+3. `generate_category_queries` - Generate queries for all categories using LLM
+4. `cache_results` - Cache generated queries (no longer used - route-level caching)
+5. `finalize` - Return final queries and categories
 
 **Key Features**:
 
@@ -90,7 +90,7 @@ Phase 2: Visibility Analysis (Orchestrated)
 - `queries`: List of 20-100 queries
 - `query_categories`: Organized by category
 
-**Cache**: 24hr TTL (per company+industry+count)
+**Cache**: No agent-level caching (route-level only)
 
 ---
 
@@ -102,9 +102,9 @@ Phase 2: Visibility Analysis (Orchestrated)
 
 **LangGraph Workflow** (3 nodes):
 
-1. Initialize responses
-2. Test queries (batch processing)
-3. Finalize
+1. `initialize_responses` - Initialize response storage for all models
+2. `test_queries_batch` - Test all queries across all models (parallel per query)
+3. `finalize` - Return model responses
 
 **Supported Models**:
 
@@ -119,7 +119,7 @@ Phase 2: Visibility Analysis (Orchestrated)
 
 - `model_responses`: Dict mapping model names to response lists
 
-**Cache**: 1hr TTL (per query+model)
+**Cache**: No agent-level caching (route-level only)
 
 ---
 
@@ -131,10 +131,10 @@ Phase 2: Visibility Analysis (Orchestrated)
 
 **LangGraph Workflow** (4 nodes):
 
-1. Initialize analysis
-2. Analyze responses (hybrid matching)
-3. Calculate score
-4. Finalize
+1. `initialize_analysis` - Build query-to-category mapping
+2. `analyze_responses` - Analyze all responses using hybrid matching (exact + semantic)
+3. `calculate_score` - Calculate visibility score and build detailed report
+4. `finalize` - Return score and analysis report
 
 **Scoring Formula**:
 
@@ -162,15 +162,15 @@ visibility_score = (total_mentions / (num_queries × num_models)) × 100
 
 **Purpose**: Orchestrates Query Generator → AI Model Tester → Scorer Analyzer with category-based batching
 
-**LangGraph Workflow** (7 nodes with looping):
+**LangGraph Workflow** (7 nodes with conditional looping):
 
-1. Initialize categories
-2. Select next category
-3. Generate category queries
-4. Test category models
-5. Analyze category results
-6. Aggregate results
-7. Loop or finalize
+1. `initialize_categories` - Initialize all categories and distribution
+2. `select_next_category` - Pick next category to process
+3. `generate_category_queries` - Generate queries for current category
+4. `test_category_models` - Test queries across all models (parallel)
+5. `analyze_category_results` - Analyze results for current category
+6. `aggregate_category_results` - Aggregate into running totals, stream progress
+7. **Conditional**: More categories? → Loop to step 2, else → `finalize_results`
 
 **Category-Based Batching**:
 
@@ -194,16 +194,16 @@ visibility_score = (total_mentions / (num_queries × num_models)) × 100
 **Endpoint**: `POST /analyze/company`
 
 - Runs Industry Detector agent
-- Cache: 24hr TTL
-- Response: SSE stream or instant JSON (if cached)
+- Cache: 24hr TTL (slug-based)
+- Response: SSE stream (instant if cached)
 
 ### Phase 2: Visibility Analysis
 
 **Endpoint**: `POST /analyze/visibility`
 
 - Runs Visibility Orchestrator (chains 3 agents)
-- Requires Phase 1 data
-- Cache layers: Industry (24hr), Queries (24hr), Responses (1hr)
+- Requires Phase 1 data (via company_slug_id)
+- Cache: 24hr TTL (slug-based, complete results)
 - Response: SSE stream with category-based progress updates
 
 ---
@@ -219,8 +219,8 @@ visibility_score = (total_mentions / (num_queries × num_models)) × 100
 
 **Performance**:
 
-- Cold: 35-70 seconds
-- Warm: 20-100ms
+- Cold: 30-60 seconds
+- Warm (cached): 10-50ms
 - Cost savings: 70%
 
 ---
@@ -272,8 +272,8 @@ All agents use LangGraph with consistent error handling:
 
 **Redis** (Port 6379):
 
-- Multi-level caching
-- TTL: 24hr (scraping/analysis), 1hr (responses)
+- Slug-based caching (route-level)
+- TTL: 24hr per route
 
 ---
 

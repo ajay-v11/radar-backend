@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two-phase workflow with LangGraph agents, 4-level caching, and hybrid mention detection for fast, accurate visibility scoring.
+Two-phase workflow with LangGraph agents, slug-based caching, and hybrid mention detection for fast, accurate visibility scoring.
 
 ## High-Level Architecture
 

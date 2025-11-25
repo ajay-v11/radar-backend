@@ -69,7 +69,7 @@ Phase 1: Company Analysis
     └─> Industry Detector Agent (LangGraph - 9 nodes)
 
 Phase 2: Visibility Analysis
-    └─> Visibility Orchestrator (LangGraph - 7 nodes)
+    └─> Visibility Orchestrator (7 nodes with looping)
         ├─> Query Generator (per category)
         ├─> AI Model Tester (parallel)
         └─> Scorer Analyzer (hybrid matching)
@@ -78,7 +78,7 @@ Phase 2: Visibility Analysis
 ### Key Features
 
 - **LangGraph Workflows**: Modular, observable agent workflows
-- **4-Level Caching**: Scraping (24hr), Industry (24hr), Queries (24hr), Responses (1hr)
+- **Slug-Based Caching**: Simple route-level caching (24hr TTL)
 - **Hybrid Matching**: Exact + semantic via ChromaDB
 - **Category-Based Batching**: Progressive results per category
 - **SSE Streaming**: Real-time progress updates

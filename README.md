@@ -35,7 +35,7 @@ An **automated multi-agent system** using LangGraph workflows that:
 
 - 📊 Quantifiable visibility metrics (0-100% score)
 - 🎯 Per-model and per-category breakdowns
-- ⚡ 70% cost reduction with 4-level caching
+- ⚡ 70% cost reduction with slug-based caching
 - 🚀 10-50ms response time on cached requests
 - 💰 Free tier available (Llama via Groq)
 
@@ -69,7 +69,7 @@ An **automated multi-agent system** using LangGraph workflows that:
 ┌──────────────────────────────────────┐
 │  Storage Layer                       │
 │  ├─> ChromaDB (vectors, semantic)   │
-│  ├─> Redis (4-level caching)        │
+│  ├─> Redis (slug-based caching)     │
 │  └─> RAG Store (query templates)    │
 └──────────────────────────────────────┘
 ```
@@ -79,10 +79,10 @@ An **automated multi-agent system** using LangGraph workflows that:
 ```
 Company URL
     ↓
-[Agent 1] Industry Detector (LangGraph - 9 nodes)
+[Agent 1] Industry Detector (9 nodes)
     → Parallel scraping, dynamic classification, generate query categories
     ↓
-[Orchestrator] Visibility Orchestrator (LangGraph - 7 nodes with looping)
+[Orchestrator] Visibility Orchestrator (7 nodes with looping)
     ↓
 [Agent 2] Query Generator (per category)
     → Generate queries using dynamic templates
@@ -104,7 +104,7 @@ Visibility Score + Detailed Report
 **AI Framework**: LangGraph (modular workflows), LangChain  
 **LLM Providers**: Claude, Gemini, Llama (Groq), OpenAI, Grok, DeepSeek  
 **Vector DB**: ChromaDB (semantic search, embeddings)  
-**Caching**: Redis (4-level: scraping 24hr, industry 24hr, queries 24hr, responses 1hr)  
+**Caching**: Redis (slug-based, 24hr TTL per route)  
 **Scraping**: Firecrawl API  
 **Infrastructure**: Docker Compose, Uvicorn
 
@@ -312,14 +312,6 @@ GET /report/visibility_xyz789/export/csv
 - [docs/LLM_PROVIDER_CONFIGURATION.md](docs/LLM_PROVIDER_CONFIGURATION.md) - LLM setup guide
 
 ---
-
-## 🚀 Performance
-
-- **Cached Response**: 10-50ms (instant)
-- **Cold Response**: 30-60s (20 queries × 2 models)
-- **Cost Reduction**: 70% with 4-level caching
-- **Supported Models**: 6 (ChatGPT, Gemini, Claude, Llama, Grok, DeepSeek)
-- **Dynamic Industries**: No hardcoded categories
 
 ---
 

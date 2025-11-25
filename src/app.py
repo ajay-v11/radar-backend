@@ -8,7 +8,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config.settings import settings
-from storage.rag_store import get_rag_store
+
 
 from src.routes import health_routes, analysis_routes
 
@@ -49,10 +49,6 @@ def create_app() -> FastAPI:
         import logging
         logger = logging.getLogger(__name__)
         
-        # Initialize RAG Store
-        rag_store = get_rag_store()
-        logger.info(f"RAGStore initialized with {len(rag_store.query_templates)} industry templates")
-        logger.info(f"Supported industries: {', '.join(rag_store.query_templates.keys())}")
         
         # Initialize databases
         try:
