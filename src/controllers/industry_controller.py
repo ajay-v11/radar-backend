@@ -7,6 +7,7 @@ import hashlib
 from typing import Optional, Dict, AsyncGenerator
 import asyncio
 import json
+from queue import Queue
 from openai import OpenAI
 from config.settings import settings
 import logging
@@ -58,41 +59,68 @@ async def analyze_company_stream(
             "data": None
         })
         
-        # Run the new modular industry detection workflow
-       
-        
-        # Create a queue to collect progress events
-        progress_events = []
+        # Create thread-safe queue for real-time streaming
+        event_queue = Queue()
+        result_container = {}
         
         def progress_callback(step, status, message, data):
-            """Callback to capture progress events."""
-            progress_events.append({
+            """Callback to capture progress events and put them in queue (thread-safe)."""
+            event = {
                 "step": step,
                 "status": status,
                 "message": message,
                 "data": data
-            })
+            }
+            event_queue.put(event)  # Thread-safe put
         
-        # Run workflow in thread with progress callback
-        result = await asyncio.to_thread(
-            run_industry_detection_workflow,
-            company_url=company_url,
-            company_name=company_name or "",
-            company_description="",
-            competitor_urls={},
-            llm_provider="claude",
-            target_region=target_region,
-            progress_callback=progress_callback
-        )
+        # Run workflow in background thread
+        async def run_workflow():
+            try:
+                result = await asyncio.to_thread(
+                    run_industry_detection_workflow,
+                    company_url=company_url,
+                    company_name=company_name or "",
+                    company_description="",
+                    competitor_urls={},
+                    llm_provider="claude",
+                    target_region=target_region,
+                    progress_callback=progress_callback
+                )
+                result_container['result'] = result
+            finally:
+                # Signal completion
+                event_queue.put(None)
         
-        # Yield all collected progress events
-        for event in progress_events:
-            yield json.dumps(event)
-            await asyncio.sleep(0.05)  # Small delay for smooth streaming
+        # Start workflow task
+        workflow_task = asyncio.create_task(run_workflow())
+        
+        # Stream events as they arrive
+        while True:
+            # Check queue in non-blocking way
+            try:
+                event = event_queue.get_nowait()
+                if event is None:  # Workflow completed
+                    break
+                yield json.dumps(event)
+            except:
+                # Queue empty, wait a bit and check again
+                await asyncio.sleep(0.05)
+                # Check if workflow is done
+                if workflow_task.done():
+                    # Drain any remaining events
+                    while not event_queue.empty():
+                        event = event_queue.get_nowait()
+                        if event is not None:
+                            yield json.dumps(event)
+                    break
+        
+        # Wait for workflow to complete
+        await workflow_task
+        result = result_container.get('result')
         
         logger.info(f"✅ Analysis complete for {company_url}")
         
-        # Format response with data/additional structure (including new dynamic fields)
+        # Format response with all fields in data object (consistent with cache)
         data = {
             "industry": result.get("industry"),
             "broad_category": result.get("broad_category"),
@@ -100,10 +128,7 @@ async def analyze_company_stream(
             "company_name": result.get("company_name"),
             "company_description": result.get("company_description"),
             "competitors": result.get("competitors", []),
-            "target_region": result.get("target_region", "United States")
-        }
-        
-        additional = {
+            "target_region": result.get("target_region", "United States"),
             "extraction_template": result.get("extraction_template", {}),
             "query_categories_template": result.get("query_categories_template", {}),
             "product_category": result.get("product_category"),
@@ -120,7 +145,6 @@ async def analyze_company_stream(
             "status": "success",
             "message": "Company analysis completed successfully",
             "data": data,
-            "additional": additional,
             "cached": False
         })
         

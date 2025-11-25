@@ -449,7 +449,8 @@ def finalize_results(state: VisibilityOrchestrationState) -> VisibilityOrchestra
         "mention_rate": state["visibility_score"] / 100 if state["visibility_score"] > 0 else 0,
         "by_category": {},
         "by_model": {},
-        "category_breakdown": []
+        "category_breakdown": [],
+        "sample_mentions": []
     }
     
     # Category breakdown with per-model data
@@ -465,6 +466,12 @@ def finalize_results(state: VisibilityOrchestrationState) -> VisibilityOrchestra
         }
         analysis_report["category_breakdown"].append(category_data)
         analysis_report["by_category"][category] = category_data
+        
+        # Collect sample mentions from each category (up to 10 total)
+        if len(analysis_report["sample_mentions"]) < 10:
+            category_samples = category_analysis.get("sample_mentions", [])
+            remaining_slots = 10 - len(analysis_report["sample_mentions"])
+            analysis_report["sample_mentions"].extend(category_samples[:remaining_slots])
     
     # Model breakdown - aggregate from all category analyses
     model_mentions = {}
@@ -494,6 +501,42 @@ def finalize_results(state: VisibilityOrchestrationState) -> VisibilityOrchestra
             "mention_rate": round(mention_rate, 4),
             "non_empty_responses": len([r for r in state.get("model_responses", {}).get(model_name, []) if r])
         }
+    
+    # Aggregate competitor rankings from all categories
+    competitor_totals = {}
+    for category in state.get("completed_categories", []):
+        category_analysis = state["category_analysis"].get(category, {})
+        competitor_rankings = category_analysis.get("competitor_rankings", {})
+        overall_rankings = competitor_rankings.get("overall", [])
+        
+        for comp_data in overall_rankings:
+            comp_name = comp_data.get("name")
+            if comp_name not in competitor_totals:
+                competitor_totals[comp_name] = 0
+            competitor_totals[comp_name] += comp_data.get("total_mentions", 0)
+    
+    # Build overall competitor rankings
+    total_queries = len(state.get("queries", []))
+    total_models = len(state.get("models", []))
+    total_possible = total_queries * total_models if total_queries and total_models else 1
+    
+    overall_rankings = []
+    for comp_name, total_mentions in competitor_totals.items():
+        mention_rate = total_mentions / total_possible if total_possible > 0 else 0.0
+        overall_rankings.append({
+            "name": comp_name,
+            "total_mentions": total_mentions,
+            "mention_rate": round(mention_rate, 4),
+            "percentage": round(mention_rate * 100, 2)
+        })
+    
+    # Sort by total mentions (descending)
+    overall_rankings.sort(key=lambda x: x["total_mentions"], reverse=True)
+    
+    analysis_report["competitor_rankings"] = {
+        "overall": overall_rankings,
+        "by_category": {}  # Can be expanded if needed
+    }
     
     state["analysis_report"] = analysis_report
     state["completed"] = True

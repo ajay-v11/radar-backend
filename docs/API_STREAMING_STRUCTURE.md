@@ -15,6 +15,15 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 
 **Purpose**: Scrape and analyze company (industry, competitors, etc.)
 
+**Request**:
+
+```json
+{
+  "company_url": "https://hellofresh.com",
+  "target_region": "United States"
+}
+```
+
 **Streaming**: Simple progress steps only
 
 - "Scraping website..."
@@ -25,6 +34,10 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 
 ```json
 {
+  "step": "complete",
+  "status": "success",
+  "message": "Analysis completed",
+  "slug_id": "company_abc123def456",
   "cached": false,
   "data": {
     "industry": "AI-Powered Meal Kit Delivery",
@@ -42,6 +55,17 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 ### `POST /analyze/visibility`
 
 **Purpose**: Generate queries, test models, calculate visibility score
+
+**Request**:
+
+```json
+{
+  "company_slug_id": "company_abc123def456",
+  "num_queries": 20,
+  "models": ["chatgpt", "gemini", "claude"],
+  "llm_provider": "claude"
+}
+```
 
 **Streaming Events** (lightweight):
 
@@ -69,10 +93,26 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
   "data": {
     "category": "product_selection",
     "category_score": 50.0,
+    "model_breakdown": {
+      "gpt-3.5-turbo": {
+        "visibility": 60.0,
+        "mentions": 3,
+        "queries": 5
+      },
+      "gemini-2.5-flash-lite": {
+        "visibility": 40.0,
+        "mentions": 2,
+        "queries": 5
+      }
+    },
     "completed_categories": 3,
     "total_categories": 6,
     "progress": "3/6",
     "partial_visibility_score": 45.5,
+    "partial_model_scores": {
+      "gpt-3.5-turbo": 55.0,
+      "gemini-2.5-flash-lite": 40.0
+    },
     "total_queries": 15,
     "total_mentions": 7,
     "category_breakdown": [
@@ -96,31 +136,50 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
   "message": "Visibility analysis completed!",
   "data": {
     "visibility_score": 45.5,
+    "model_scores": {
+      "gpt-3.5-turbo": 50.0,
+      "gemini-2.5-flash-lite": 41.0,
+      "claude-3-5-haiku-20241022": 45.5
+    },
     "total_queries": 20,
     "total_mentions": 10,
     "categories_processed": 6,
     "category_breakdown": [...],
-    "analysis_id": "https://hellofresh.com"
-  }
+    "model_category_matrix": {
+      "gpt-3.5-turbo": {
+        "product_selection": 60.0,
+        "comparison": 40.0,
+        "best_of": 50.0
+      },
+      "gemini-2.5-flash-lite": {
+        "product_selection": 40.0,
+        "comparison": 35.0,
+        "best_of": 48.0
+      }
+    },
+    "slug_id": "visibility_abc123def456"
+  },
+  "cached": false
 }
 ```
+
+**Note**: Cache hits return identical structure with `"cached": true`
 
 **What's NOT streamed**:
 
 - query_log (detailed query-by-query results)
 - competitor_rankings
-- by_model analysis
 - sample_mentions
 
 ---
 
 ## Report Endpoints
 
-### `GET /report/{company_url:path}`
+### `GET /report/{slug_id}`
 
 **Purpose**: Get complete analysis report with all detailed data
 
-**Example**: `GET /report/https://hellofresh.com`
+**Example**: `GET /report/visibility_abc123def456`
 
 **Response**:
 
@@ -195,9 +254,11 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 
 ---
 
-### `POST /report/{company_url:path}/query-log`
+### `POST /report/{slug_id}/query-log`
 
 **Purpose**: Get paginated query log with filtering
+
+**Example**: `POST /report/visibility_abc123def456/query-log`
 
 **Request Body**:
 
@@ -256,17 +317,19 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 1. **Start visibility analysis**: `POST /analyze/visibility`
 2. **Listen to SSE stream**:
    - Update progress bar from `category_complete` events
-   - Update score card with `partial_visibility_score`
+   - Update overall score with `partial_visibility_score`
+   - Update per-model scores with `partial_model_scores`
    - Update category table with `category_breakdown`
-3. **On completion**: Store `analysis_id` for detailed reports
+   - Show per-model breakdown within each category
+3. **On completion**: Store `slug_id` for detailed reports
 
 ### Detailed Reports (on-demand)
 
-1. **Full report**: `GET /report/{company_url}`
+1. **Full report**: `GET /report/{slug_id}`
    - Show competitor rankings
-   - Show per-model analysis
+   - Show detailed per-model analysis
    - Show sample mentions
-2. **Query log table**: `POST /report/{company_url}/query-log`
+2. **Query log table**: `POST /report/{slug_id}/query-log`
    - Paginate through all queries
    - Filter by category/model/mentioned
    - Show detailed results per query
@@ -276,7 +339,9 @@ The API now follows a **lightweight streaming + detailed reports** pattern for o
 ## Benefits
 
 ✅ **Fast streaming**: Minimal data, instant UI updates  
+✅ **Per-model visibility**: Real-time scores for each AI model with exact names  
 ✅ **Progressive loading**: Show summary → load details on demand  
 ✅ **Better UX**: Live updates + detailed analysis separately  
+✅ **Consistent format**: Cache hits and misses return identical structure  
 ✅ **Scalable**: 100 queries won't bloat the stream  
 ✅ **Flexible**: Filter and paginate detailed data as needed

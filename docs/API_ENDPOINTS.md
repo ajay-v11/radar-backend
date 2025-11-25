@@ -58,54 +58,44 @@ Analyzes company website, detects industry, identifies competitors, and generate
 - Higher chance of failure (broken URLs, scraping issues)
 - Can be enhanced independently (user-provided competitors)
 - Results are reusable across multiple visibility analyses
-- Can be cached for instant subsequent calls
+- Slug-based caching for instant subsequent calls
 
 **Request:**
 
 ```json
 {
   "company_url": "https://hellofresh.com",
-  "company_name": "HelloFresh" // optional
+  "company_name": "HelloFresh", // optional
+  "target_region": "United States" // optional, default: "United States"
 }
 ```
 
-**Response (Cached):**
+**Response (Always SSE Stream):**
+
+Server-Sent Events (SSE) stream - instant for cache hits, live for cache misses:
+
+```
+data: {"step": "complete", "status": "success", "message": "Analysis completed", "slug_id": "company_abc123def456", "cached": true, "data": {...}}
+```
+
+**Final Data Structure:**
 
 ```json
 {
-  "cached": true,
+  "step": "complete",
+  "status": "success",
+  "slug_id": "company_abc123def456",
+  "cached": false,
   "data": {
-    "industry": "food_services",
+    "industry": "AI-Powered Meal Kit Delivery",
     "company_name": "HelloFresh",
     "company_description": "Meal kit delivery service...",
     "company_summary": "Detailed 3-4 sentence summary...",
     "competitors": ["Blue Apron", "Home Chef", "EveryPlate"],
-    "competitors_data": [
-      {
-        "name": "Blue Apron",
-        "description": "Meal kit delivery with chef-designed recipes",
-        "products": "meal kits, wine subscriptions",
-        "positioning": "premium quality ingredients"
-      }
-    ]
+    "target_region": "United States",
+    "query_categories_template": {...}
   }
 }
-```
-
-**Response (Streaming - Cache Miss):**
-
-Server-Sent Events (SSE) stream with progress updates:
-
-```
-data: {"step": "scraping", "status": "started", "message": "Scraping website..."}
-
-data: {"step": "scraping", "status": "completed", "data": {"content_length": 5000}}
-
-data: {"step": "analysis", "status": "started", "message": "Analyzing with AI..."}
-
-data: {"step": "analysis", "status": "completed", "data": {...}}
-
-data: {"step": "complete", "status": "success", "data": {...}}
 ```
 
 ---
@@ -114,117 +104,92 @@ data: {"step": "complete", "status": "success", "data": {...}}
 
 ### `POST /analyze/visibility`
 
-Orchestrates the visibility analysis workflow with parallel batch processing.
+Orchestrates the visibility analysis workflow with category-based batching.
 
-**Prerequisites**: Must run `POST /analyze/company` first to get company data.
+**Prerequisites**: Must run `POST /analyze/company` first to get `company_slug_id`.
 
 **Steps:**
 
-1. Industry detection (reuses Phase 1 cache if available)
-2. Query generation (cached, organized by category)
-3. Parallel batch testing across selected AI models
-4. Scoring with RAG-based competitor matching
-5. Final aggregation and reporting
+1. Uses cached company data from Phase 1
+2. Query generation per category (dynamic templates)
+3. Model testing per category (parallel across models)
+4. Scoring with per-model and per-category breakdowns
+5. Progressive streaming with partial results
 
 **Request:**
 
 ```json
 {
-  "company_url": "https://hellofresh.com",
-  "company_name": "HelloFresh", // optional
-  "company_description": "", // optional
+  "company_slug_id": "company_abc123def456",
   "num_queries": 20,
-  "models": ["chatgpt", "gemini"],
-  "llm_provider": "gemini",
-  "batch_size": 5
+  "models": ["chatgpt", "gemini", "claude"],
+  "llm_provider": "claude"
 }
 ```
 
 **Parameters:**
 
-- `company_url` (required): Company website URL
-- `company_name` (optional): Company name
-- `company_description` (optional): Company description
-- `num_queries` (default: 20): Number of queries to generate
+- `company_slug_id` (required): Slug from Phase 1 company analysis
+- `num_queries` (default: 20): Total queries to generate (distributed across categories)
 - `models` (default: ["llama", "gemini"]): AI models to test
-  - Available: `chatgpt`, `gemini`, `claude`, `llama`, `mistral`, `qwen`
-- `llm_provider` (default: "gemini"): LLM for query generation
-  - Available: `gemini`, `chatgpt`, `claude`
-- `batch_size` (default: 5): Queries per batch for parallel processing
+  - Available: `chatgpt`, `gemini`, `claude`, `llama`, `grok`, `deepseek`
+- `llm_provider` (default: "llama"): LLM for query generation
+  - Available: `claude`, `gemini`, `llama`, `openai`, `grok`, `deepseek`
 
-**Response (Streaming):**
+**Response (Always SSE Stream):**
 
-Server-Sent Events (SSE) stream with real-time progress:
+Server-Sent Events (SSE) stream - instant for cache hits, live for cache misses:
 
 ```
-data: {"step": "step1", "status": "started", "message": "Starting industry detection..."}
+data: {"step": "initialization", "status": "completed", "message": "Initialized 6 categories", "data": {...}}
 
-data: {"step": "step1", "status": "completed", "data": {"industry": "food_services", "company_name": "HelloFresh", "competitors": [...]}}
+data: {"step": "category_complete", "status": "completed", "message": "Category 'product_selection' complete!", "data": {"category": "product_selection", "category_score": 50.0, "model_breakdown": {"gpt-3.5-turbo": {"visibility": 60.0, "mentions": 3, "queries": 5}}, "partial_visibility_score": 50.0, "partial_model_scores": {"gpt-3.5-turbo": 60.0}, ...}}
 
-data: {"step": "step2", "status": "started", "message": "Generating queries..."}
+... (repeats for each category)
 
-data: {"step": "step2", "status": "completed", "data": {"total_queries": 20, "categories": 5}}
-
-data: {"step": "step3", "status": "started", "message": "Starting parallel batch testing..."}
-
-data: {"step": "batch", "status": "testing_started", "data": {"batch_num": 1, "batch_size": 5, "progress": 0}}
-
-data: {"step": "batch", "status": "testing_completed", "data": {"batch_num": 1, "responses_count": 10}}
-
-data: {"step": "batch", "status": "analysis_started", "data": {"batch_num": 1}}
-
-data: {"step": "batch", "status": "analysis_completed", "data": {"batch_num": 1, "visibility_score": 75.5, "total_mentions": 8}}
-
-... (repeats for each batch)
-
-data: {"step": "step4", "status": "started", "message": "Aggregating results..."}
-
-data: {"step": "step4", "status": "completed", "data": {"visibility_score": 75.5, "total_mentions": 30, "by_model": {...}}}
-
-data: {"step": "complete", "status": "success", "data": {...}, "message": "Analysis completed successfully!"}
+data: {"step": "complete", "status": "success", "message": "Visibility analysis completed!", "cached": false, "data": {...}}
 ```
 
 **Final Data Structure:**
 
 ```json
 {
-  "industry": "food_services",
-  "company_name": "HelloFresh",
-  "competitors": ["Blue Apron", "Home Chef"],
-  "total_queries": 20,
-  "total_responses": 40,
-  "visibility_score": 75.5,
-  "analysis_report": {
+  "step": "complete",
+  "status": "success",
+  "message": "Visibility analysis completed!",
+  "cached": false,
+  "data": {
+    "visibility_score": 75.5,
+    "model_scores": {
+      "gpt-3.5-turbo": 80.0,
+      "gemini-2.5-flash-lite": 71.0,
+      "claude-3-5-haiku-20241022": 75.5
+    },
+    "total_queries": 20,
     "total_mentions": 30,
-    "mention_rate": 0.75,
-    "by_model": {
-      "chatgpt": {
-        "mentions": 16,
-        "total_responses": 20,
-        "mention_rate": 0.80,
-        "competitor_mentions": {
-          "Blue Apron": 8,
-          "Home Chef": 5
-        }
+    "categories_processed": 6,
+    "category_breakdown": [
+      {
+        "category": "product_selection",
+        "score": 50.0,
+        "queries": 5,
+        "mentions": 3
+      }
+    ],
+    "model_category_matrix": {
+      "gpt-3.5-turbo": {
+        "product_selection": 60.0,
+        "comparison": 80.0,
+        "best_of": 90.0
       },
-      "gemini": {
-        "mentions": 14,
-        "total_responses": 20,
-        "mention_rate": 0.70
+      "gemini-2.5-flash-lite": {
+        "product_selection": 40.0,
+        "comparison": 70.0,
+        "best_of": 80.0
       }
     },
-    "sample_mentions": [
-      "Query: 'What are the best meal kit services?' -> Chatgpt mentioned company (with Blue Apron, Home Chef)"
-    ]
-  },
-  "batch_results": [
-    {
-      "batch_num": 1,
-      "visibility_score": 80.0,
-      "total_mentions": 8,
-      "by_model": {...}
-    }
-  ]
+    "slug_id": "visibility_abc123def456"
+  }
 }
 ```
 
@@ -232,19 +197,28 @@ data: {"step": "complete", "status": "success", "data": {...}, "message": "Analy
 
 ## Caching Strategy
 
-### Phase 1 (Company Analysis)
+### Slug-Based Caching
 
-- **Cache Key**: `company_url`
+Both phases use **slug-based caching** for simple, predictable cache management:
+
+**Phase 1 (Company Analysis)**
+
+- **Slug**: `company_{hash(url + region)}`
 - **TTL**: 24 hours
-- **Storage**: Redis
-- **Benefit**: Instant results on repeated analysis (~10-50ms vs 10-30s)
+- **Benefit**: Instant results (~10-50ms vs 10-30s)
 
-### Phase 2 (Complete Flow)
+**Phase 2 (Visibility Analysis)**
 
-- **Industry Detection**: Uses Phase 1 cache
-- **Query Generation**: Cached per `company_url + industry + num_queries`
-- **Model Responses**: Cached per `query + model` (1hr TTL)
-- **Benefit**: 70% cost reduction on repeated queries
+- **Slug**: `visibility_{hash(url + num_queries + models + llm_provider)}`
+- **TTL**: 24 hours
+- **Benefit**: Instant results, 70% cost reduction
+
+### Report Endpoints
+
+Use the `slug_id` from analysis responses to fetch detailed reports:
+
+- `GET /report/{slug_id}` - Full analysis report
+- `POST /report/{slug_id}/query-log` - Paginated query log
 
 ---
 
@@ -254,48 +228,41 @@ data: {"step": "complete", "status": "success", "data": {...}, "message": "Analy
 
 ```typescript
 // Phase 1: Analyze Company
-async function analyzeCompany(companyUrl: string, companyName?: string) {
-  const response = await fetch('/analyze/company', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({company_url: companyUrl, company_name: companyName}),
-  });
+async function analyzeCompany(companyUrl: string) {
+  const eventSource = new EventSource('/analyze/company');
 
-  const data = await response.json();
+  eventSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
 
-  if (data.cached) {
-    // Instant cached result
-    return data.data;
-  } else {
-    // Handle SSE stream
-    const eventSource = new EventSource('/analyze/company');
-    eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log(data.step, data.status, data.message);
-    };
-  }
+    if (data.step === 'complete') {
+      console.log('Company analyzed:', data.slug_id);
+      console.log('Cached:', data.cached);
+      eventSource.close();
+      return data.slug_id; // Use this for Phase 2
+    }
+  };
 }
 
-// Phase 2: Complete Flow
-async function runCompleteFlow(params: CompleteFlowParams) {
+// Phase 2: Visibility Analysis
+async function runVisibilityAnalysis(companySlugId: string) {
   const eventSource = new EventSource('/analyze/visibility');
 
   eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
 
     switch (data.step) {
-      case 'step1':
-        // Update UI: Industry detection progress
-        break;
-      case 'step2':
-        // Update UI: Query generation progress
-        break;
-      case 'batch':
-        // Update UI: Batch testing progress
+      case 'category_complete':
+        // Update per-category progress
+        console.log('Category:', data.data.category);
+        console.log('Partial score:', data.data.partial_visibility_score);
+        console.log('Per-model scores:', data.data.partial_model_scores);
         break;
       case 'complete':
         // Final results
-        console.log('Visibility Score:', data.data.visibility_score);
+        console.log('Final score:', data.data.visibility_score);
+        console.log('Model scores:', data.data.model_scores);
+        console.log('Slug ID:', data.data.slug_id);
+        console.log('Cached:', data.cached);
         eventSource.close();
         break;
     }
@@ -333,24 +300,19 @@ data: {"step": "error", "status": "failed", "data": {"error": "..."}, "message":
 
 ---
 
-## Removed Endpoints
-
-The following redundant endpoints have been removed:
-
-- ❌ `/industry/analyze` - Replaced by `/analyze/company`
-- ❌ `/industry/analyze-smart` - Merged into `/analyze/company`
-- ❌ `/queries/generate` - Integrated into `/analyze/visibility`
-- ❌ `/queries/generate-smart` - Integrated into `/analyze/visibility`
-- ❌ `/visibility/analyze` - Replaced by `/analyze/visibility`
-- ❌ `/parallel/test-and-analyze` - Replaced by `/analyze/visibility`
-
----
-
 ## Summary
 
-**Two endpoints, clean workflow:**
+**Clean two-phase workflow:**
 
-1. `POST /analyze/company` - Get company profile (cached)
-2. `POST /analyze/visibility` - Run full visibility analysis (streaming)
+1. `POST /analyze/company` → Returns `company_slug_id`
+2. `POST /analyze/visibility` → Uses `company_slug_id`, returns `visibility_slug_id`
+3. `GET /report/{slug_id}` → Detailed analysis (optional)
+4. `POST /report/{slug_id}/query-log` → Query log with filters (optional)
 
-Simple, predictable, and optimized for frontend integration.
+**Key Features:**
+
+- ✅ Slug-based caching for predictable cache management
+- ✅ Identical response format for cache hits and misses
+- ✅ Per-model visibility scores with exact model names
+- ✅ Real-time streaming with progressive results
+- ✅ Category-based batching for better UX

@@ -2,161 +2,139 @@
 
 ## System Architecture
 
-The system uses a **two-phase workflow** with 4 specialized agents:
+The system uses a **two-phase workflow** with 5 LangGraph-based agents:
 
 ```
 Phase 1: Company Analysis
     └─> Industry Detector Agent
 
-Phase 2: Complete Visibility Flow
-    ├─> Industry Detector Agent (reuses Phase 1 cache)
-    ├─> Query Generator Agent
-    ├─> AI Model Tester Agent
-    └─> Scorer Analyzer Agent
+Phase 2: Visibility Analysis (Orchestrated)
+    └─> Visibility Orchestrator
+        ├─> Query Generator Agent
+        ├─> AI Model Tester Agent
+        └─> Scorer Analyzer Agent
 ```
 
-## Workflow State
+## Key Features
 
-All agents share a common state that flows through the pipeline:
-
-```python
-{
-    "company_url": str,
-    "company_name": str,
-    "company_description": str,
-    "industry": str,
-    "competitors": List[str],
-    "queries": List[str],
-    "model_responses": Dict[str, List[str]],
-    "visibility_score": float,
-    "analysis_report": Dict,
-    "errors": List[str]
-}
-```
+- **LangGraph Workflows**: All agents use LangGraph for modular, observable workflows
+- **Category-Based Batching**: Visibility orchestrator processes queries by category with progressive results
+- **Dynamic Classification**: No hardcoded industries - LLM generates specific classifications
+- **Parallel Scraping**: Company and competitor pages scraped simultaneously
+- **Multi-Level Caching**: 4 cache layers (scraping, industry analysis, queries, model responses)
+- **Hybrid Matching**: Exact + semantic mention detection using ChromaDB
 
 ---
 
-## Agent 1: Industry Detector (Dynamic)
+## Agent 1: Industry Detector
 
 **Module**: `agents/industry_detection_agent/`
 
-**Purpose**: Scrapes company website, dynamically classifies industry, generates extraction templates, creates query categories
+**Purpose**: Analyzes company website with dynamic industry classification and generates custom query categories
 
-**Process**:
+**LangGraph Workflow** (9 nodes):
 
-1. Check cache (24hr TTL)
-2. **Parallel scraping**: Company + competitor pages simultaneously
-3. Combine scraped content
-4. **Classify industry** (LLM, no constraints)
-5. **Generate extraction template** (industry-specific fields)
-6. **Extract company data** (using template)
-7. **Generate query categories** (company-specific)
-8. Enrich competitors (optional)
-9. Store in ChromaDB with embeddings
+1. Scrape company pages (parallel)
+2. Scrape competitor pages (parallel)
+3. Combine content
+4. Classify industry (pure LLM, no constraints)
+5. Generate extraction template
+6. Extract company data
+7. Generate query categories
+8. Enrich competitors
+9. Finalize
 
-**Dynamic Classification**: No hardcoded industries. LLM generates specific names like "AI-Powered Meal Kit Delivery" instead of generic "food_services"
+**Key Features**:
+
+- Parallel scraping (company + competitors simultaneously)
+- Dynamic industry classification (e.g., "AI-Powered Meal Kit Delivery" not "food_services")
+- Generates custom query categories per company
+- Stores competitors in ChromaDB with rich embeddings
 
 **Output**:
 
-- `industry`: Specific industry name (e.g., "B2B SaaS Project Management")
-- `broad_category`: Grouping (e.g., "Technology", "Commerce")
-- `industry_description`: What defines this industry
-- `extraction_template`: Dynamic fields for this industry
-- `query_categories_template`: Custom query categories for this company
+- `industry`, `broad_category`, `industry_description`
+- `query_categories_template` (used by query generator)
 - `company_name`, `company_description`, `company_summary`
-- `competitors`: List of competitor names
-- `competitors_data`: Rich metadata (description, products, positioning)
-- `product_category`, `market_keywords`, `target_audience`
-- `brand_positioning`, `buyer_intent_signals`, `industry_specific`
+- `competitors`, `competitors_data` (with products, positioning)
+- `extraction_template`, `product_category`, `market_keywords`
+- `target_audience`, `brand_positioning`, `buyer_intent_signals`
 
-**Features**:
-
-- **Parallel scraping** (40% faster with competitors)
-- **LangGraph workflow** (9 nodes, modular)
-- **Pure LLM classification** (no keyword fallback)
-- **Dynamic templates** (no hardcoded industry lists)
-- **Query categories** for query generator agent
-- Redis caching (93% cost savings on repeated URLs)
-- Stores competitors with rich embeddings for semantic search
+**Cache**: 24hr TTL (scraping + analysis)
 
 ---
 
 ## Agent 2: Query Generator
 
-**File**: `agents/query_generator.py`
+**Module**: `agents/query_generator_agent/`
 
-**Purpose**: Generates industry-specific search queries using LLM
+**Purpose**: Generates search queries using dynamic categories from Industry Detector
 
-**Process**:
+**LangGraph Workflow** (5 nodes):
 
-1. Check cache (24hr TTL)
-2. Select industry-specific categories (weighted)
-3. Generate queries with LLM for each category
-4. Incorporate company + competitor context
-5. Deduplicate and cache results
+1. Check cache
+2. Calculate distribution (weighted)
+3. Generate queries per category (LLM)
+4. Cache results
+5. Finalize
 
-**Categories** (example for food_services):
+**Key Features**:
 
-- Comparison (30%): "HelloFresh vs Blue Apron"
-- Product Selection (25%): "best meal kits for families"
-- Dietary Needs (20%): "keto meal delivery"
-- Best-of Lists (15%): "top 10 meal delivery 2025"
-- How-to (10%): "how meal kits work"
+- Uses `query_categories_template` from Industry Detector (no hardcoded categories)
+- Weighted distribution (e.g., comparison 30%, product selection 25%)
+- LLM generates queries with company + competitor context
+- Deduplication
 
 **Output**:
 
 - `queries`: List of 20-100 queries
 - `query_categories`: Organized by category
 
-**Features**:
-
-- Industry-specific templates
-- Weighted distribution across categories
-- Company + competitor context in queries
-- Redis caching (instant on repeated requests)
+**Cache**: 24hr TTL (per company+industry+count)
 
 ---
 
 ## Agent 3: AI Model Tester
 
-**File**: `agents/ai_model_tester.py`
+**Module**: `agents/ai_model_tester_agent/`
 
 **Purpose**: Tests queries across multiple AI models
+
+**LangGraph Workflow** (3 nodes):
+
+1. Initialize responses
+2. Test queries (batch processing)
+3. Finalize
 
 **Supported Models**:
 
 - ChatGPT (gpt-3.5-turbo)
 - Gemini (gemini-2.5-flash-lite)
-- Claude (claude-3-haiku)
-- Llama (llama-3.1-8b-instant via Groq - FREE)
+- Claude (claude-3-5-haiku)
+- Llama (llama-3.1-8b-instant via Groq)
 - Grok (via OpenRouter)
 - DeepSeek (via OpenRouter)
-
-**Process**:
-
-1. For each query:
-   - Check cache (1hr TTL)
-   - Query each model
-   - Cache response
-   - Store in model_responses
 
 **Output**:
 
 - `model_responses`: Dict mapping model names to response lists
 
-**Features**:
-
-- Response caching (70% cost reduction)
-- Graceful error handling
-- Empty response on failure (non-blocking)
+**Cache**: 1hr TTL (per query+model)
 
 ---
 
 ## Agent 4: Scorer Analyzer
 
-**File**: `agents/scorer_analyzer.py`
+**Module**: `agents/scorer_analyzer_agent/`
 
 **Purpose**: Calculates visibility score using hybrid mention detection
+
+**LangGraph Workflow** (4 nodes):
+
+1. Initialize analysis
+2. Analyze responses (hybrid matching)
+3. Calculate score
+4. Finalize
 
 **Scoring Formula**:
 
@@ -164,29 +142,48 @@ All agents share a common state that flows through the pipeline:
 visibility_score = (total_mentions / (num_queries × num_models)) × 100
 ```
 
-**Mention Detection** (Hybrid):
+**Hybrid Mention Detection**:
 
-1. **Exact String Matching**: Fast, high-precision company name search
-2. **Semantic Matching**: RAG-based competitor detection via ChromaDB
+1. **Exact matching**: Fast company name search
+2. **Semantic matching**: RAG-based via ChromaDB (threshold: 0.70)
    - Catches variations: "meal kit service" → HelloFresh
-   - Similarity threshold: 0.70
-   - Uses rich embeddings (name + description + products + positioning)
+   - Uses rich embeddings from Industry Detector
 
 **Output**:
 
 - `visibility_score`: 0-100 score
-- `analysis_report`: Detailed breakdown with:
-  - Per-model metrics
-  - Competitor mention tracking
-  - Sample mentions with context
+- `analysis_report`: Per-model metrics, competitor mentions, samples
 
-**Interpretation**:
+---
 
-- 90-100%: Excellent visibility
-- 70-89%: Good visibility
-- 50-69%: Moderate visibility
-- 30-49%: Low visibility
-- 0-29%: Very low visibility
+## Agent 5: Visibility Orchestrator
+
+**Module**: `agents/visibility_orchestrator/`
+
+**Purpose**: Orchestrates Query Generator → AI Model Tester → Scorer Analyzer with category-based batching
+
+**LangGraph Workflow** (7 nodes with looping):
+
+1. Initialize categories
+2. Select next category
+3. Generate category queries
+4. Test category models
+5. Analyze category results
+6. Aggregate results
+7. Loop or finalize
+
+**Category-Based Batching**:
+
+- Processes one category at a time
+- Streams progressive results after each category
+- Provides partial scores and per-model breakdowns
+- Allows early visibility into results
+
+**Output**:
+
+- `queries`, `query_categories`, `model_responses`
+- `visibility_score`, `analysis_report`
+- Progressive updates via callback
 
 ---
 
@@ -196,66 +193,35 @@ visibility_score = (total_mentions / (num_queries × num_models)) × 100
 
 **Endpoint**: `POST /analyze/company`
 
-**Purpose**: Isolated company analysis (higher failure rate, reusable results)
-
-**Cache**: 24hr TTL on complete analysis
-
-**Response**:
-
-- Cached: Instant JSON (~10-50ms)
-- Not cached: SSE stream with progress
+- Runs Industry Detector agent
+- Cache: 24hr TTL
+- Response: SSE stream or instant JSON (if cached)
 
 ### Phase 2: Visibility Analysis
 
 **Endpoint**: `POST /analyze/visibility`
 
-**Prerequisites**: Must run Phase 1 first
-
-**Purpose**: Generate queries, test AI models, calculate visibility score
-
-**Cache Layers**:
-
-1. Industry analysis (24hr) - from Phase 1
-2. Queries (24hr) - per company+industry+count
-3. Model responses (1hr) - per query+model
-4. Complete flow (24hr) - per all parameters
-
-**Cache Behavior**:
-
-- Same everything → Instant cached results
-- Only models changed → Reuses queries, re-runs tests
-- Only num_queries changed → Reuses industry, regenerates queries
-
-**Response**:
-
-- Cached: Instant JSON
-- Not cached: SSE stream with real-time progress
+- Runs Visibility Orchestrator (chains 3 agents)
+- Requires Phase 1 data
+- Cache layers: Industry (24hr), Queries (24hr), Responses (1hr)
+- Response: SSE stream with category-based progress updates
 
 ---
 
-## Smart Caching Strategy
+## Caching Strategy
 
-### Multi-Level Caching
+**4 Cache Levels**:
 
-```
-Level 1: Industry Analysis (24hr)
-  → Instant company data on repeated requests
+1. Scraping (24hr) - Raw website content
+2. Industry Analysis (24hr) - Complete company profile
+3. Queries (24hr) - Generated queries per company+count
+4. Model Responses (1hr) - Per query+model
 
-Level 2: Queries (24hr)
-  → Reuses queries when only models change
+**Performance**:
 
-Level 3: Model Responses (1hr)
-  → 70% cost reduction on repeated queries
-
-Level 4: Complete Flow (24hr)
-  → Instant results when all parameters match
-```
-
-### Performance
-
-**Cold Cache**: 35-70 seconds
-**Warm Cache**: 20-100ms (instant)
-**Cost Savings**: 70% with caching
+- Cold: 35-70 seconds
+- Warm: 20-100ms
+- Cost savings: 70%
 
 ---
 
@@ -264,19 +230,17 @@ Level 4: Complete Flow (24hr)
 ### Environment Variables
 
 ```bash
-# LLM Provider Configuration (Choose your provider)
-INDUSTRY_ANALYSIS_PROVIDER=claude  # Options: claude, gemini, llama, openai, grok, deepseek
-QUERY_GENERATION_PROVIDER=claude   # Options: claude, gemini, llama, openai, grok, deepseek
+# LLM Providers
+INDUSTRY_ANALYSIS_PROVIDER=claude  # claude, gemini, llama, openai, grok, deepseek
+QUERY_GENERATION_PROVIDER=claude
 
-# API Keys (At least one required)
-ANTHROPIC_API_KEY=sk-ant-...       # For Claude (Recommended)
-GEMINI_API_KEY=...                 # For Gemini
-GROK_API_KEY=gsk-...               # For Llama (FREE via Groq)
-OPEN_ROUTER_API_KEY=sk-or-v1-...  # For Grok/DeepSeek
-OPENAI_API_KEY=sk-...              # For OpenAI
-
-# Required
-FIRECRAWL_API_KEY=...
+# API Keys
+ANTHROPIC_API_KEY=...  # Claude (Recommended)
+GEMINI_API_KEY=...     # Gemini
+GROK_API_KEY=...       # Llama via Groq (FREE)
+OPEN_ROUTER_API_KEY=...  # Grok/DeepSeek
+OPENAI_API_KEY=...     # OpenAI
+FIRECRAWL_API_KEY=...  # Required
 
 # Databases
 CHROMA_HOST=localhost
@@ -285,141 +249,60 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 ```
 
-### LLM Provider Configuration
-
-The system uses a centralized LLM provider system. Configure in `.env`:
-
-```bash
-# Recommended: Claude (best balance of quality, speed, cost)
-INDUSTRY_ANALYSIS_PROVIDER=claude
-QUERY_GENERATION_PROVIDER=claude
-
-# Budget: Llama (FREE via Groq)
-INDUSTRY_ANALYSIS_PROVIDER=llama
-QUERY_GENERATION_PROVIDER=llama
-
-# Mixed: Claude for analysis, Llama for generation
-INDUSTRY_ANALYSIS_PROVIDER=claude
-QUERY_GENERATION_PROVIDER=llama
-```
-
-**Supported Providers:**
-
-- `claude` - Claude 3.5 Haiku (Recommended - fast, accurate, low cost)
-- `gemini` - Gemini 2.5 Flash Lite (Good alternative)
-- `llama` - Llama 3.1 8B via Groq (FREE, very fast)
-- `openai` - GPT-4o-mini (Requires credits)
-- `grok` - Grok 4.1 Fast via OpenRouter
-- `deepseek` - DeepSeek v3 via OpenRouter (FREE)
-
-See `docs/LLM_PROVIDER_CONFIGURATION.md` for detailed configuration guide.
-
-### Model Settings
-
-```python
-# config/settings.py
-INDUSTRY_ANALYSIS_PROVIDER = "claude"
-QUERY_GENERATION_PROVIDER = "claude"
-
-CLAUDE_MODEL = "claude-3-5-haiku-20241022"
-GEMINI_MODEL = "gemini-2.5-flash-lite"
-GROQ_LLAMA_MODEL = "llama-3.1-8b-instant"
-CHATGPT_MODEL = "gpt-4o-mini"
-
-DEFAULT_MODELS = ["chatgpt", "gemini"]
-MIN_QUERIES = 20
-MAX_QUERIES = 100
-```
+See `docs/LLM_PROVIDER_CONFIGURATION.md` for details.
 
 ---
 
 ## Error Handling
 
-All agents follow consistent principles:
+All agents use LangGraph with consistent error handling:
 
-1. **Non-Blocking**: Agents continue on errors
-2. **Graceful Degradation**: Fallback strategies
-3. **Error Logging**: Errors stored in `state["errors"]`
-4. **State Preservation**: Partial results still returned
+- Non-blocking: Errors logged, workflow continues
+- Errors stored in `state["errors"]`
+- Partial results returned on failure
 
 ---
 
-## Database Architecture
+## Databases
 
-### ChromaDB (Vector Store)
+**ChromaDB** (Port 8001):
 
-- Port: 8001
 - Collections: `companies`, `competitors`
-- Usage: Semantic search, competitor matching
+- Usage: Semantic search for mention detection
 
-### Redis (Cache)
+**Redis** (Port 6379):
 
-- Port: 6379
-- TTL: 24hr (scrapes/analysis), 1hr (responses)
-- Usage: Multi-level caching, rate limiting
-
-### RAG Store (In-Memory)
-
-- Query templates by industry (25+ per category)
-- Loaded on startup
+- Multi-level caching
+- TTL: 24hr (scraping/analysis), 1hr (responses)
 
 ---
 
 ## Quick Start
 
-### 1. Start Services
-
 ```bash
+# 1. Start services
 docker-compose up -d
-```
 
-### 2. Run Server
-
-```bash
+# 2. Run server
 python run_server.py
-```
 
-### 3. Use API
-
-```bash
-# Phase 1: Analyze company
+# 3. Phase 1: Analyze company
 curl -X POST http://localhost:8000/analyze/company \
   -H "Content-Type: application/json" \
   -d '{"company_url": "https://hellofresh.com"}'
 
-# Phase 2: Visibility analysis
+# 4. Phase 2: Visibility analysis
 curl -X POST http://localhost:8000/analyze/visibility \
   -H "Content-Type: application/json" \
-  -d '{
-    "company_url": "https://hellofresh.com",
-    "num_queries": 20,
-    "models": ["chatgpt", "gemini"]
-  }'
+  -d '{"company_url": "https://hellofresh.com", "num_queries": 20, "models": ["chatgpt", "gemini"]}'
 ```
 
 ---
 
 ## Documentation
 
-For detailed documentation, see:
-
-- **Architecture**: `docs/ARCHITECTURE.md` - System design and data flow
-- **Orchestration**: `docs/ORCHESTRATION.md` - Workflow coordination
-- **API Reference**: `docs/API_ENDPOINTS.md` - Complete API docs
-- **Agent Details**:
-  - `docs/AGENT_INDUSTRY_DETECTOR.md`
-  - `docs/AGENT_QUERY_GENERATOR.md`
-  - `docs/AGENT_AI_MODEL_TESTER.md`
-  - `docs/AGENT_SCORER_ANALYZER.md`
-
----
-
-## Key Features
-
-✅ **Multi-Level Caching**: 4 cache layers for optimal performance
-✅ **Hybrid Matching**: Exact + semantic mention detection
-✅ **Smart Caching**: Granular cache keys for maximum reuse
-✅ **Parallel Processing**: Batch testing for efficiency
-✅ **Cost Optimized**: 70% cost reduction with caching
-✅ **Streaming Updates**: Real-time progress via SSE
-✅ **Graceful Degradation**: Continues on partial failures
+- `docs/ARCHITECTURE.md` - System design
+- `docs/API_ENDPOINTS.md` - API reference
+- `docs/LLM_PROVIDER_CONFIGURATION.md` - LLM setup
+- `docs/LANGGRAPH_MIGRATION.md` - LangGraph architecture
+- Individual agent docs in `docs/AGENT_*.md`

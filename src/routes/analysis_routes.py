@@ -92,7 +92,7 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
             ):
                 event = json.loads(event_json)
                 if event.get("step") == "complete" and event.get("status") == "success":
-                    final_data = {**event.get("data", {}), **event.get("additional", {})}
+                    final_data = event.get("data", {})
                     # Add company_url to cached data
                     final_data["company_url"] = str(request.company_url)
                     event["slug_id"] = slug
@@ -120,6 +120,53 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
 # Phase 2: Visibility Analysis
 # ============================================================================
 
+def build_competitor_summary(analysis_report: dict, top_n: int = 5) -> list:
+    """Build simple competitor summary for dashboard display."""
+    competitor_rankings = analysis_report.get("competitor_rankings", {})
+    overall_rankings = competitor_rankings.get("overall", [])
+    
+    # Return top N competitors with simplified data
+    summary = []
+    for comp in overall_rankings[:top_n]:
+        summary.append({
+            "name": comp.get("name"),
+            "mention_count": comp.get("total_mentions", 0),
+            "visibility_score": comp.get("percentage", 0)
+        })
+    
+    return summary
+
+
+def clean_query_log(query_log: list) -> list:
+    """Remove response_preview from query log entries."""
+    cleaned = []
+    for entry in query_log:
+        cleaned_entry = {
+            "query": entry.get("query"),
+            "category": entry.get("category"),
+            "results": {}
+        }
+        for model_name, result in entry.get("results", {}).items():
+            cleaned_entry["results"][model_name] = {
+                "mentioned": result.get("mentioned"),
+                "rank": result.get("rank"),
+                "competitors_mentioned": result.get("competitors_mentioned")
+            }
+        cleaned.append(cleaned_entry)
+    return cleaned
+
+
+def clean_category_analysis(analysis: dict) -> dict:
+    """Remove sample_mentions and response_preview from category analysis."""
+    cleaned = analysis.copy()
+    # Remove sample_mentions if present
+    cleaned.pop("sample_mentions", None)
+    # Clean query_log if present
+    if "query_log" in cleaned:
+        cleaned["query_log"] = clean_query_log(cleaned["query_log"])
+    return cleaned
+
+
 async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: str, company_slug: str, company_data: dict):
     """
     Stream visibility analysis workflow with category-based batching.
@@ -145,74 +192,121 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
             "target_region": company_data.get("target_region", "United States")
         }, "Using cached company data")
         
-        # Collect progress updates
-        progress_updates = []
+        # Create thread-safe queue for real-time streaming
+        from queue import Queue
+        event_queue = Queue()
+        result_container = {}
         
         def progress_callback(step, status, message, data):
-            progress_updates.append((step, status, message, data))
+            """Thread-safe callback to stream progress in real-time."""
+            event_queue.put((step, status, message, data))
             logger.info(f"Progress: {step} - {message}")
         
         # Run visibility analysis in thread
         import concurrent.futures
         
+        def run_analysis():
+            try:
+                result = execute_visibility_analysis(
+                    company_data=company_data,
+                    company_url=company_data.get("company_url", ""),
+                    num_queries=request.num_queries,
+                    models=request.models,
+                    llm_provider=request.llm_provider,
+                    progress_callback=progress_callback
+                )
+                result_container['result'] = result
+            finally:
+                # Signal completion
+                event_queue.put(None)
+        
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(
-            execute_visibility_analysis,
-            company_data=company_data,
-            company_url=company_data.get("company_url", ""),
-            num_queries=request.num_queries,
-            models=request.models,
-            llm_provider=request.llm_provider,
-            progress_callback=progress_callback
-        )
+        future = executor.submit(run_analysis)
         
-        # Wait for analysis to complete
-        final_result = future.result(timeout=600)
+        # Stream progress updates in real-time as they arrive
+        while True:
+            try:
+                event = event_queue.get(timeout=0.1)
+                if event is None:  # Analysis completed
+                    break
+                step, status, message, data = event
+                yield emit(step, status, data, message)
+            except:
+                # Queue empty, check if analysis is done
+                if future.done():
+                    # Drain any remaining events
+                    while not event_queue.empty():
+                        event = event_queue.get_nowait()
+                        if event is not None:
+                            step, status, message, data = event
+                            yield emit(step, status, data, message)
+                    break
+                await asyncio.sleep(0.05)
         
-        # Stream all progress updates (lightweight)
-        for step, status, message, data in progress_updates:
-            yield emit(step, status, data, message)
+        # Get final result
+        future.result(timeout=1)  # Should be instant since it's done
+        final_result = result_container.get('result')
         
         # Cache the complete results with slug
         cache_by_slug(slug, final_result)
         
-        # Build lightweight category breakdown
+        # Build complete response with all required fields
         analysis_report = final_result.get("analysis_report", {})
-        category_breakdown = []
-        for cat in analysis_report.get("category_breakdown", []):
-            category_breakdown.append({
-                "category": cat.get("category"),
-                "score": cat.get("score", 0),
-                "queries": cat.get("queries", 0),
-                "mentions": cat.get("mentions", 0)
-            })
         
-        # Get per-model scores with exact names
+        # Get per-model scores with exact names and full breakdown
         from agents.visibility_orchestrator.nodes import get_exact_model_name
-        by_model = analysis_report.get("by_model", {})
+        by_model_raw = analysis_report.get("by_model", {})
+        
+        # Build model_scores (simple scores) and by_model (detailed breakdown)
         model_scores = {}
-        for model_key, model_data in by_model.items():
+        by_model = {}
+        for model_key, model_data in by_model_raw.items():
             exact_name = get_exact_model_name(model_key)
             mentions = model_data.get("mentions", 0)
             total = model_data.get("total_responses", 0)
+            mention_rate = model_data.get("mention_rate", 0)
             score = (mentions / total * 100) if total > 0 else 0.0
+            
             model_scores[exact_name] = round(score, 2)
+            by_model[exact_name] = {
+                "mentions": mentions,
+                "total_responses": total,
+                "mention_rate": round(mention_rate, 4),
+                "score": round(score, 2)
+            }
         
-        # Build model-category matrix with exact names
+        # Build model-category matrix BEFORE cleaning (needs original data)
         model_category_matrix = {}
-        for cat_key, cat_data in analysis_report.get("by_category", {}).items():
-            by_model_cat = cat_data.get("analysis", {}).get("by_model", {})
+        for cat_data in analysis_report.get("category_breakdown", []):
+            cat_key = cat_data.get("category")
+            cat_analysis = cat_data.get("analysis", {})
+            by_model_cat = cat_analysis.get("by_model", {})
+            
             for model_key, model_cat_data in by_model_cat.items():
                 exact_name = get_exact_model_name(model_key)
                 if exact_name not in model_category_matrix:
                     model_category_matrix[exact_name] = {}
                 
                 mentions = model_cat_data.get("mentions", 0)
-                total = model_cat_data.get("total", 0)
+                total = model_cat_data.get("total_responses", 0)
                 score = (mentions / total * 100) if total > 0 else 0.0
                 model_category_matrix[exact_name][cat_key] = round(score, 2)
         
-        # Send final event - identical structure to cached response
+        # Build category breakdown with full details (cleaned)
+        category_breakdown = []
+        for cat in analysis_report.get("category_breakdown", []):
+            category_breakdown.append({
+                "category": cat.get("category"),
+                "score": cat.get("score", 0),
+                "queries": cat.get("queries", 0),
+                "mentions": cat.get("mentions", 0),
+                "analysis": clean_category_analysis(cat.get("analysis", {}))
+            })
+        
+        # Build competitor summary for dashboard
+        top_competitors = build_competitor_summary(analysis_report, top_n=5)
+        
+        # Send final event with complete data structure
         final_event_data = {
             "visibility_score": final_result.get("visibility_score", 0),
             "model_scores": model_scores,
@@ -221,7 +315,16 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
             "categories_processed": len(category_breakdown),
             "category_breakdown": category_breakdown,
             "model_category_matrix": model_category_matrix,
-            "slug_id": slug
+            "top_competitors": top_competitors,
+            "slug_id": slug,
+            "analysis_report": {
+                "total_mentions": analysis_report.get("total_mentions", 0),
+                "total_responses": analysis_report.get("total_responses", 0),
+                "mention_rate": analysis_report.get("mention_rate", 0),
+                "by_model": by_model,
+                "by_category": analysis_report.get("by_category", {}),
+                "category_breakdown": category_breakdown
+            }
         }
         
         yield emit("complete", "success", final_event_data, "Visibility analysis completed!")
@@ -274,38 +377,56 @@ async def analyze_visibility(request: VisibilityAnalysisRequest):
                 from agents.visibility_orchestrator.nodes import get_exact_model_name
                 
                 analysis_report = cached_result.get("analysis_report", {})
-                category_breakdown = []
-                for cat in analysis_report.get("category_breakdown", []):
-                    category_breakdown.append({
-                        "category": cat.get("category"),
-                        "score": cat.get("score", 0),
-                        "queries": cat.get("queries", 0),
-                        "mentions": cat.get("mentions", 0)
-                    })
                 
-                # Get per-model scores with exact names
-                by_model = analysis_report.get("by_model", {})
+                # Get per-model scores with exact names and full breakdown
+                by_model_raw = analysis_report.get("by_model", {})
                 model_scores = {}
-                for model_key, model_data in by_model.items():
+                by_model = {}
+                for model_key, model_data in by_model_raw.items():
                     exact_name = get_exact_model_name(model_key)
                     mentions = model_data.get("mentions", 0)
                     total = model_data.get("total_responses", 0)
+                    mention_rate = model_data.get("mention_rate", 0)
                     score = (mentions / total * 100) if total > 0 else 0.0
+                    
                     model_scores[exact_name] = round(score, 2)
+                    by_model[exact_name] = {
+                        "mentions": mentions,
+                        "total_responses": total,
+                        "mention_rate": round(mention_rate, 4),
+                        "score": round(score, 2)
+                    }
                 
-                # Build model-category matrix with exact names
+                # Build model-category matrix BEFORE cleaning (needs original data)
                 model_category_matrix = {}
-                for cat_key, cat_data in analysis_report.get("by_category", {}).items():
-                    by_model_cat = cat_data.get("analysis", {}).get("by_model", {})
+                for cat_data in analysis_report.get("category_breakdown", []):
+                    cat_key = cat_data.get("category")
+                    cat_analysis = cat_data.get("analysis", {})
+                    by_model_cat = cat_analysis.get("by_model", {})
+                    
                     for model_key, model_cat_data in by_model_cat.items():
                         exact_name = get_exact_model_name(model_key)
                         if exact_name not in model_category_matrix:
                             model_category_matrix[exact_name] = {}
                         
                         mentions = model_cat_data.get("mentions", 0)
-                        total = model_cat_data.get("total", 0)
+                        total = model_cat_data.get("total_responses", 0)
                         score = (mentions / total * 100) if total > 0 else 0.0
                         model_category_matrix[exact_name][cat_key] = round(score, 2)
+                
+                # Build category breakdown with full details (cleaned)
+                category_breakdown = []
+                for cat in analysis_report.get("category_breakdown", []):
+                    category_breakdown.append({
+                        "category": cat.get("category"),
+                        "score": cat.get("score", 0),
+                        "queries": cat.get("queries", 0),
+                        "mentions": cat.get("mentions", 0),
+                        "analysis": clean_category_analysis(cat.get("analysis", {}))
+                    })
+                
+                # Build competitor summary for dashboard
+                top_competitors = build_competitor_summary(analysis_report, top_n=5)
                 
                 # Emit identical structure to live analysis
                 final_event = {
@@ -320,7 +441,16 @@ async def analyze_visibility(request: VisibilityAnalysisRequest):
                         "categories_processed": len(category_breakdown),
                         "category_breakdown": category_breakdown,
                         "model_category_matrix": model_category_matrix,
-                        "slug_id": visibility_slug
+                        "top_competitors": top_competitors,
+                        "slug_id": visibility_slug,
+                        # "analysis_report": {
+                        #     "total_mentions": analysis_report.get("total_mentions", 0),
+                        #     "total_responses": analysis_report.get("total_responses", 0),
+                        #     "mention_rate": analysis_report.get("mention_rate", 0),
+                        #     "by_model": by_model,
+                        #     "by_category": analysis_report.get("by_category", {}),
+                        #     "category_breakdown": category_breakdown
+                        # }
                     },
                     "cached": True
                 }
