@@ -96,6 +96,31 @@ Company URL
 Visibility Score + Detailed Report
 ```
 
+### LangGraph Workflow Visualizations
+
+#### Industry Detection Agent (9 Nodes)
+
+![Industry Detection Agent Workflow](industry_detection_graph.png)
+
+The Industry Detector uses a 9-node LangGraph workflow that:
+
+- Scrapes company and competitor pages in parallel
+- Dynamically classifies industry (no hardcoded categories)
+- Generates custom query categories per company
+- Stores competitors in ChromaDB with rich embeddings
+
+#### Visibility Orchestrator (7 Nodes with Conditional Looping)
+
+![Visibility Orchestrator Workflow](visibility_orchestrator_graph.png)
+
+The Visibility Orchestrator uses a 7-node LangGraph workflow with category-based batching:
+
+- Processes one category at a time (comparison, product selection, etc.)
+- Generates queries → Tests models → Analyzes results → Aggregates
+- Conditional edge loops back for next category
+- Streams progressive results after each category completes
+- Provides partial scores and per-model breakdowns in real-time
+
 ---
 
 ## 📌 D. Tech Stack
@@ -193,10 +218,6 @@ FIRECRAWL_API_KEY=...              # Required
 OPENAI_API_KEY=sk-...              # For ChatGPT testing
 OPEN_ROUTER_API_KEY=sk-or-v1-...  # For Grok/DeepSeek
 ```
-
-📖 **Detailed Guide**: See [docs/LLM_PROVIDER_CONFIGURATION.md](docs/LLM_PROVIDER_CONFIGURATION.md)
-
-⚠️ **Never commit `.env` to version control!**
 
 ---
 
