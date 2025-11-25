@@ -41,6 +41,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health_routes.router)
     app.include_router(analysis_routes.router)
+    app.include_router(analysis_routes.report_router)
     
     @app.on_event("startup")
     async def startup_event():

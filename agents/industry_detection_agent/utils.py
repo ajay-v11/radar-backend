@@ -26,104 +26,12 @@ OPENAI_TIMEOUT = 30.0
 # Removed hardcoded industry constraints - now using dynamic LLM-based classification
 
 
-# Caching functions
-def get_industry_analysis_cache_key(url: str, llm_provider: str, competitor_urls: Dict[str, str]) -> str:
-    """Generate cache key for complete industry analysis."""
-    competitor_str = json.dumps(sorted(competitor_urls.items())) if competitor_urls else ""
-    key = f"{url}:{llm_provider}:{competitor_str}"
-    return f"industry_analysis:{hashlib.sha256(key.encode()).hexdigest()}"
-
-
-def get_cached_industry_analysis(url: str, llm_provider: str, competitor_urls: Dict[str, str]) -> Optional[Dict]:
-    """Get cached industry analysis result."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_industry_analysis_cache_key(url, llm_provider, competitor_urls)
-        cached = redis_client.get(cache_key)
-        if cached:
-            logger.info(f"Cache HIT for industry analysis: {url} (provider={llm_provider})")
-            if isinstance(cached, bytes):
-                cached = cached.decode('utf-8')
-            return json.loads(cached)
-        logger.debug(f"Cache MISS for industry analysis: {url} (provider={llm_provider})")
-        return None
-    except Exception as e:
-        logger.warning(f"Industry analysis cache retrieval failed: {e}")
-        return None
-
-
-def cache_industry_analysis(url: str, llm_provider: str, competitor_urls: Dict[str, str], state: WorkflowState) -> None:
-    """Cache complete industry analysis result."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_industry_analysis_cache_key(url, llm_provider, competitor_urls)
-        
-        cache_data = {
-            "company_name": state.get("company_name", ""),
-            "company_description": state.get("company_description", ""),
-            "company_summary": state.get("company_summary", state.get("company_description", "")),
-            "target_region": state.get("target_region", "United States"),
-            "industry": state.get("industry", "other"),
-            "broad_category": state.get("broad_category", "Other"),
-            "industry_description": state.get("industry_description", ""),
-            "extraction_template": state.get("extraction_template", {}),
-            "query_categories_template": state.get("query_categories_template", {}),
-            "competitors": state.get("competitors", []),
-            "competitors_data": state.get("competitors_data", []),
-            "product_category": state.get("product_category", ""),
-            "market_keywords": state.get("market_keywords", []),
-            "target_audience": state.get("target_audience", ""),
-            "brand_positioning": state.get("brand_positioning", {}),
-            "buyer_intent_signals": state.get("buyer_intent_signals", {}),
-            "industry_specific": state.get("industry_specific", {}),
-            "errors": state.get("errors", [])
-        }
-        
-        redis_client.setex(cache_key, SCRAPE_CACHE_TTL, json.dumps(cache_data))
-        logger.info(f"Cached industry analysis for: {url} (provider={llm_provider})")
-    except Exception as e:
-        logger.warning(f"Industry analysis cache storage failed: {e}")
-
-
-def get_scrape_cache_key(url: str) -> str:
-    """Generate cache key for scraped content."""
-    return f"scrape:{hashlib.sha256(url.encode()).hexdigest()}"
-
-
-def get_cached_scrape(url: str) -> Optional[str]:
-    """Get cached scraped content."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_scrape_cache_key(url)
-        cached = redis_client.get(cache_key)
-        if cached:
-            logger.info(f"Cache HIT for scrape: {url}")
-            return cached
-        logger.debug(f"Cache MISS for scrape: {url}")
-        return None
-    except Exception as e:
-        logger.warning(f"Cache retrieval failed: {e}")
-        return None
-
-
-def cache_scrape(url: str, content: str) -> None:
-    """Cache scraped content."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_scrape_cache_key(url)
-        redis_client.setex(cache_key, SCRAPE_CACHE_TTL, content)
-        logger.debug(f"Cached scrape for: {url}")
-    except Exception as e:
-        logger.warning(f"Cache storage failed: {e}")
+# Caching removed - using route-level slug-based caching only
 
 
 # Scraping functions
 def scrape_website(url: str, errors: List[str], full_content: bool = False) -> str:
-    """Scrape website content using Firecrawl with caching.
+    """Scrape website content using Firecrawl.
     
     Args:
         url: Website URL to scrape
@@ -133,10 +41,6 @@ def scrape_website(url: str, errors: List[str], full_content: bool = False) -> s
     Returns:
         Scraped content in markdown format
     """
-    cached_content = get_cached_scrape(url)
-    if cached_content:
-        return cached_content
-    
     if not settings.FIRECRAWL_API_KEY:
         errors.append("Firecrawl API key not configured")
         return ""
@@ -167,7 +71,6 @@ def scrape_website(url: str, errors: List[str], full_content: bool = False) -> s
                 if markdown_content:
                     # Apply length limit only if full_content is False
                     content = markdown_content if full_content else markdown_content[:MAX_SCRAPED_CONTENT_LENGTH]
-                    cache_scrape(url, content)
                     logger.info(f"Successfully scraped {len(content)} characters from {url}")
                     return content
                 else:

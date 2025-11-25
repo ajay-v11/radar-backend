@@ -30,8 +30,8 @@ def initialize_responses(state: AIModelTesterState) -> AIModelTesterState:
 
 
 def test_queries_batch(state: AIModelTesterState) -> AIModelTesterState:
-    """Node: Test all queries across all models in parallel batches."""
-    logger.info("🧪 Testing queries across models...")
+    """Node: Test all queries as a batch per model (much more efficient)."""
+    logger.info("🧪 Testing queries across models (batched)...")
     
     queries = state.get("queries", [])
     models = state.get("models", [])
@@ -49,34 +49,38 @@ def test_queries_batch(state: AIModelTesterState) -> AIModelTesterState:
         state["errors"] = errors
         return state
     
-    # Test each query against all models
-    for i, query in enumerate(queries):
-        logger.info(f"Testing query {i+1}/{len(queries)}: {query[:50]}...")
+    # Import batch query function
+    from agents.ai_model_tester_agent.utils import query_model_batch
+    
+    # Test all models in parallel, each getting all queries at once
+    logger.info(f"Batching {len(queries)} queries across {len(models)} models...")
+    
+    with ThreadPoolExecutor(max_workers=len(models)) as executor:
+        future_to_model = {
+            executor.submit(query_model_batch, model, queries, target_region): model
+            for model in models
+        }
         
-        # Test all models for this query in parallel
-        with ThreadPoolExecutor(max_workers=len(models)) as executor:
-            future_to_model = {
-                executor.submit(query_model, model, query, target_region): model
-                for model in models
-            }
-            
-            for future in as_completed(future_to_model):
-                model = future_to_model[future]
-                try:
-                    response = future.result(timeout=60)
-                    model_responses[model].append(response)
-                    logger.debug(f"  ✓ {model}: {len(response)} chars")
-                except Exception as e:
-                    error_msg = f"Error testing {model} on query '{query[:50]}...': {str(e)}"
-                    errors.append(error_msg)
-                    logger.error(error_msg)
-                    model_responses[model].append("")  # Empty response on error
+        for future in as_completed(future_to_model):
+            model = future_to_model[future]
+            try:
+                # Dynamic timeout: 10s per query, min 120s, max 300s
+                timeout = min(max(len(queries) * 10, 120), 300)
+                responses = future.result(timeout=timeout)
+                model_responses[model] = responses
+                logger.info(f"  ✓ {model}: {len(responses)} responses")
+            except Exception as e:
+                error_msg = f"Error batch testing {model}: {str(e)}"
+                errors.append(error_msg)
+                logger.error(error_msg)
+                # Fill with empty responses
+                model_responses[model] = [""] * len(queries)
     
     state["model_responses"] = model_responses
     state["errors"] = errors
     
     total_responses = sum(len(r) for r in model_responses.values())
-    logger.info(f"✓ Completed testing. Total responses: {total_responses}")
+    logger.info(f"✓ Completed batch testing. Total responses: {total_responses}")
     
     return state
 

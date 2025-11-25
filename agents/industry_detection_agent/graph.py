@@ -141,9 +141,7 @@ def run_industry_detection_workflow(
     # Get final result
     result = state
     
-    # Cache the results
-    from agents.industry_detection_agent.utils import cache_industry_analysis
-    cache_industry_analysis(company_url, llm_provider, competitor_urls or {}, result)
+    # No caching at agent level - using route-level caching only
     
     # Return cleaned result with new dynamic fields
     return {

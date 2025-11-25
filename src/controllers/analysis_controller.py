@@ -21,15 +21,13 @@ logger = logging.getLogger(__name__)
 def _get_complete_flow_cache_key(
     company_url: str,
     num_queries: int,
-    models: List[str],
-    query_weights: Optional[dict] = None
+    models: List[str]
 ) -> str:
     """Generate cache key for complete flow results."""
     normalized_url = company_url.rstrip('/')
     models_str = ','.join(sorted(models))
-    weights_str = json.dumps(query_weights, sort_keys=True) if query_weights else ""
     
-    key = f"{normalized_url}:{num_queries}:{models_str}:{weights_str}"
+    key = f"{normalized_url}:{num_queries}:{models_str}"
     cache_key = f"complete_flow:{hashlib.sha256(key.encode()).hexdigest()}"
     return cache_key
 
@@ -37,8 +35,7 @@ def _get_complete_flow_cache_key(
 def get_cached_complete_flow(
     company_url: str,
     num_queries: int,
-    models: List[str],
-    query_weights: Optional[dict] = None
+    models: List[str]
 ) -> Optional[dict]:
     """Get cached complete flow results if available."""
     try:
@@ -48,8 +45,7 @@ def get_cached_complete_flow(
         cache_key = _get_complete_flow_cache_key(
             company_url,
             num_queries,
-            models,
-            query_weights
+            models
         )
         
         cached = redis_client.get(cache_key)
@@ -71,7 +67,6 @@ def cache_complete_flow(
     num_queries: int,
     models: List[str],
     result: dict,
-    query_weights: Optional[dict] = None,
     ttl: int = 86400
 ) -> None:
     """Cache complete flow results (24 hour TTL by default)."""
@@ -82,8 +77,7 @@ def cache_complete_flow(
         cache_key = _get_complete_flow_cache_key(
             company_url,
             num_queries,
-            models,
-            query_weights
+            models
         )
         
         redis_client.setex(cache_key, ttl, json.dumps(result))
@@ -102,8 +96,7 @@ def execute_visibility_analysis(
     num_queries: int,
     models: List[str],
     llm_provider: str,
-    batch_size: int,
-    query_weights: Optional[dict] = None
+    progress_callback = None
 ) -> dict:
     """
     Execute visibility analysis workflow using LangGraph orchestrator.
@@ -112,7 +105,7 @@ def execute_visibility_analysis(
     
     Steps (orchestrated by LangGraph):
     1. Query generation (using dynamic query_categories_template)
-    2. AI model testing (parallel)
+    2. AI model testing (parallel batches)
     3. Scoring and analysis
     
     Args:
@@ -123,8 +116,7 @@ def execute_visibility_analysis(
         num_queries: Number of queries to generate
         models: List of AI models to test
         llm_provider: LLM provider for query generation
-        batch_size: Batch size (not used by new orchestrator)
-        query_weights: Optional category weights (not used by new orchestrator)
+        progress_callback: Optional callback for progress updates
     
     Returns:
         Complete analysis results with visibility score and detailed report
@@ -149,12 +141,13 @@ def execute_visibility_analysis(
         "query_categories_template": company_data["query_categories_template"]
     }
     
-    # Run the new LangGraph orchestrator
+    # Run the new LangGraph orchestrator with progress callback
     result = run_visibility_orchestration(
         company_data=orchestrator_input,
         num_queries=num_queries,
         models=models,
-        llm_provider=llm_provider
+        llm_provider=llm_provider,
+        progress_callback=progress_callback
     )
     
     # Format result to match expected structure

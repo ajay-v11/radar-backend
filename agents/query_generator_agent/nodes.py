@@ -20,21 +20,8 @@ MAX_COMPETITORS_IN_CONTEXT = 5
 
 
 def check_cache(state: QueryGeneratorState) -> QueryGeneratorState:
-    """Node: Check if queries are cached."""
-    from agents.query_generator_agent.utils import get_cached_queries
-    
-    company_url = state["company_url"]
-    industry = state["industry"]
-    num_queries = state["num_queries"]
-    
-    cached = get_cached_queries(company_url, industry, num_queries)
-    
-    if cached:
-        logger.info("✓ Using cached queries")
-        state["queries"] = cached["queries"]
-        state["query_categories"] = cached["query_categories"]
-        state["completed"] = True
-    
+    """Node: Skip cache check - using route-level caching only."""
+    # No caching at agent level
     return state
 
 
@@ -294,19 +281,8 @@ Return ONLY a JSON array of query strings:
 
 
 def cache_results(state: QueryGeneratorState) -> QueryGeneratorState:
-    """Node: Cache the generated queries."""
-    from agents.query_generator_agent.utils import cache_queries
-    
-    company_url = state["company_url"]
-    industry = state["industry"]
-    num_queries = state["num_queries"]
-    queries = state.get("queries", [])
-    query_categories = state.get("query_categories", {})
-    
-    if queries:
-        cache_queries(company_url, industry, num_queries, queries, query_categories)
-        logger.info("✓ Results cached")
-    
+    """Node: Skip caching - using route-level caching only."""
+    # No caching at agent level
     return state
 
 

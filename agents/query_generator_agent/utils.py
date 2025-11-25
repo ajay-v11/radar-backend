@@ -13,47 +13,7 @@ logger = logging.getLogger(__name__)
 QUERY_CACHE_TTL = 86400  # 24 hours
 
 
-def get_query_cache_key(company_url: str, industry: str, num_queries: int) -> str:
-    """Generate cache key for query results."""
-    normalized_url = company_url.rstrip('/')
-    key = f"{normalized_url}:{industry}:{num_queries}"
-    cache_key = f"queries:{hashlib.sha256(key.encode()).hexdigest()}"
-    return cache_key
-
-
-def get_cached_queries(company_url: str, industry: str, num_queries: int) -> Optional[Dict]:
-    """Get cached query results."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_query_cache_key(company_url, industry, num_queries)
-        cached = redis_client.get(cache_key)
-        if cached:
-            logger.info(f"Cache HIT for queries: {company_url} ({industry}, {num_queries} queries)")
-            if isinstance(cached, bytes):
-                cached = cached.decode('utf-8')
-            return json.loads(cached)
-        logger.debug(f"Cache MISS for queries: {company_url} ({industry}, {num_queries} queries)")
-        return None
-    except Exception as e:
-        logger.warning(f"Cache retrieval failed: {e}")
-        return None
-
-
-def cache_queries(company_url: str, industry: str, num_queries: int, queries: List[str], query_categories: Dict) -> None:
-    """Cache query results."""
-    try:
-        from config.database import get_redis_client
-        redis_client = get_redis_client()
-        cache_key = get_query_cache_key(company_url, industry, num_queries)
-        cache_data = {
-            "queries": queries,
-            "query_categories": query_categories
-        }
-        redis_client.setex(cache_key, QUERY_CACHE_TTL, json.dumps(cache_data))
-        logger.info(f"Cached queries for: {company_url} ({industry}, {num_queries} queries)")
-    except Exception as e:
-        logger.warning(f"Cache storage failed: {e}")
+# Caching removed - using route-level slug-based caching only
 
 
 def get_query_generation_llm(llm_provider: str = None):

@@ -10,7 +10,6 @@ import json
 from openai import OpenAI
 from config.settings import settings
 import logging
-from agents.industry_detection_agent.utils import get_cached_industry_analysis
 from agents.industry_detection_agent import run_industry_detection_workflow
 
 
@@ -42,52 +41,6 @@ async def analyze_company_stream(
             "data": None
         })
         await asyncio.sleep(0.1)
-        
-        # Check cache first using the new agent's cache
-    
-        
-        cached_analysis = await asyncio.to_thread(
-            get_cached_industry_analysis,
-            company_url,
-            "claude",  # Default LLM provider
-            {}  # No competitor URLs for now
-        )
-        
-        if cached_analysis:
-            logger.info(f"⚡ Cache HIT for {company_url}")
-            
-            # Format response with data/additional structure (including new dynamic fields)
-            data = {
-                "industry": cached_analysis.get("industry"),
-                "broad_category": cached_analysis.get("broad_category"),
-                "industry_description": cached_analysis.get("industry_description"),
-                "company_name": cached_analysis.get("company_name"),
-                "company_description": cached_analysis.get("company_description"),
-                "competitors": cached_analysis.get("competitors", []),
-                "target_region": cached_analysis.get("target_region", "United States")
-            }
-            
-            additional = {
-                "extraction_template": cached_analysis.get("extraction_template", {}),
-                "query_categories_template": cached_analysis.get("query_categories_template", {}),
-                "product_category": cached_analysis.get("product_category"),
-                "market_keywords": cached_analysis.get("market_keywords", []),
-                "target_audience": cached_analysis.get("target_audience"),
-                "brand_positioning": cached_analysis.get("brand_positioning", {}),
-                "buyer_intent_signals": cached_analysis.get("buyer_intent_signals", {}),
-                "industry_specific": cached_analysis.get("industry_specific", {}),
-                "competitors_data": cached_analysis.get("competitors_data", [])
-            }
-            
-            yield json.dumps({
-                "step": "complete",
-                "status": "success",
-                "message": "Analysis completed (from cache)",
-                "data": data,
-                "additional": additional,
-                "cached": True
-            })
-            return
         
         # Step 2: Scraping
         yield json.dumps({
@@ -180,46 +133,4 @@ async def analyze_company_stream(
         })
 
 
-# Legacy cache functions - kept for backward compatibility with routes
-def _get_analysis_cache_key(url: str) -> str:
-    """Generate cache key for complete analysis (legacy)."""
- 
-    normalized_url = url.rstrip('/').lower()
-    return f"analysis:{hashlib.md5(normalized_url.encode()).hexdigest()}"
-
-
-def _get_cached_analysis(url: str, target_region: str = "United States") -> Optional[Dict]:
-    """
-    Get cached complete analysis (legacy wrapper).
-    
-    This wraps the new agent's cache for backward compatibility.
-    """
-    try:
-        # Use the new agent's cache
-        cached = get_cached_industry_analysis(url, "claude", {})
-        
-        if cached:
-            # Return in the format expected by routes (including new dynamic fields)
-            return {
-                "industry": cached.get("industry"),
-                "broad_category": cached.get("broad_category", "Other"),
-                "industry_description": cached.get("industry_description", ""),
-                "extraction_template": cached.get("extraction_template", {}),
-                "query_categories_template": cached.get("query_categories_template", {}),
-                "company_name": cached.get("company_name"),
-                "company_description": cached.get("company_description"),
-                "company_summary": cached.get("company_summary", cached.get("company_description", "")),
-                "competitors": cached.get("competitors", []),
-                "product_category": cached.get("product_category", ""),
-                "market_keywords": cached.get("market_keywords", []),
-                "target_audience": cached.get("target_audience", ""),
-                "brand_positioning": cached.get("brand_positioning", {}),
-                "buyer_intent_signals": cached.get("buyer_intent_signals", {}),
-                "industry_specific": cached.get("industry_specific", {}),
-                "competitors_data": cached.get("competitors_data", []),
-                "target_region": cached.get("target_region", target_region)
-            }
-        return None
-    except Exception as e:
-        print(f"Cache retrieval failed: {e}")
-        return None
+# No legacy cache functions - using route-level slug-based caching only
