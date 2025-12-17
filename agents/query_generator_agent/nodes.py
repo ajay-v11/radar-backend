@@ -7,6 +7,7 @@ import json
 from typing import Dict, List
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from config.settings import settings
 from agents.query_generator_agent.models import QueryGeneratorState, CategoryQueries
 from agents.query_generator_agent.utils import (
     get_query_generation_llm,
@@ -145,65 +146,73 @@ def _generate_queries_for_category(
         return []
     
     try:
-        context = f"""Industry: {industry}
-Company: {company_name}
-Description: {company_description or company_summary or "Not provided"}"""
-        
-        if competitors:
-            context += f"\nMain Competitors: {', '.join(competitors[:MAX_COMPETITORS_IN_CONTEXT])}"
-        
         category_name = category_info.get("name", category_key)
         category_description = category_info.get("description", "")
+        include_brands = category_info.get("include_brands", False)
         category_examples = category_info.get("examples", [])
         
-        prompt = f"""Generate {num_queries} search queries for the "{category_name}" category.
+        # Branch logic based on whether brands are allowed
+        if include_brands:
+            # Brand-specific category - company name MUST be present, can include competitors
+            competitors_context = f"\nCompetitors: {', '.join(competitors[:5])}" if competitors else ""
+            
+            prompt = f"""Generate {num_queries} brand-specific search queries that ALL mention "{company_name}".
 
-Category Description: {category_description}
-Category Examples: {', '.join(category_examples)}
+Company: {company_name}{competitors_context}
 
-Company Context:
-{context}
-
-CRITICAL REQUIREMENTS:
+STRICT REQUIREMENTS:
 1. Generate exactly {num_queries} unique queries
-2. Queries should represent real user search intent in 2025
-3. Make queries specific to the {industry} industry
-4. **ABSOLUTELY NO BRAND NAMES** - Do not mention "{company_name}" or ANY competitor names
-5. All queries must be completely GENERIC and open-ended
-6. Use natural language that real users would type
-7. Vary query length and style (questions, phrases, statements)
-8. Focus on buyer intent and decision-making queries
-9. For comparison queries, use phrases like:
-   - "best sites for..."
-   - "top platforms to..."
-   - "compare online stores for..."
-   - "which website is better for..."
-   - "list of best e-commerce sites for..."
+2. EVERY query MUST include "{company_name}" as the primary brand
+3. Use natural language that real users would type in 2025
+4. Include variations like:
+   - "{company_name} reviews"
+   - "what is {company_name}"
+   - "{company_name} alternatives"
+   - "is {company_name} worth it"
+   - "{company_name} pricing"
+   - "how does {company_name} work"
+   - "{company_name} vs [competitor]" (company name FIRST)
+   - "{company_name} features"
+   - "best {company_name} plans"
+   - "{company_name} compared to [competitor]" (company name FIRST)
 
-GOOD EXAMPLES (100% generic, no brand names):
-✅ "best online marketplace for electronics"
-✅ "where to buy affordable smartphones online"
-✅ "top e-commerce sites in India"
-✅ "compare online shopping platforms for fashion"
-✅ "which website has best deals on laptops"
-✅ "list of best sites to buy home appliances"
-✅ "customer reviews for online shopping platforms"
-✅ "most reliable e-commerce sites for electronics"
-
-BAD EXAMPLES (any brand mention):
-❌ "Flipkart customer reviews" (mentions our brand)
-❌ "Amazon smartphone deals" (mentions competitor)
-❌ "Amazon vs Snapdeal comparison" (mentions competitors)
-❌ "Myntra vs Ajio fashion" (mentions competitors)
-❌ "best deals on Amazon" (mentions competitor)
+For comparison queries, ALWAYS put {company_name} first, then the competitor.
 
 Return ONLY a JSON array of query strings:
 ["query 1", "query 2", ...]"""
 
-        messages = [
-            SystemMessage(content=f"You are an expert SEO and search intent analyst. Generate realistic search queries that users would type when searching for products/services in the {industry} industry. CRITICAL: Do NOT mention ANY brand names (including '{company_name}' or competitors like {', '.join(competitors[:3])}). All queries must be 100% generic. Always respond with valid JSON array."),
-            HumanMessage(content=prompt)
-        ]
+            messages = [
+                SystemMessage(content=f"You are an SEO expert. Generate queries where '{company_name}' is ALWAYS mentioned. For comparison queries, always put {company_name} first. Respond with valid JSON array only."),
+                HumanMessage(content=prompt)
+            ]
+        else:
+            # Generic category - NO brand names allowed
+            examples_text = "\n".join([f"✅ {ex}" for ex in category_examples[:3]]) if category_examples else ""
+            
+            prompt = f"""Generate {num_queries} GENERIC search queries for the "{category_name}" category.
+
+Category: {category_description}
+Industry: {industry}
+
+STRICT REQUIREMENTS:
+1. Generate exactly {num_queries} unique queries
+2. Queries should represent real user search intent in 2025
+3. Make queries specific to the {industry} industry
+4. Use natural language that real users would type
+5. Vary query length and style (questions, phrases, statements)
+6. Focus on buyer intent and decision-making queries
+7. **ABSOLUTELY NO BRAND NAMES** - Keep all queries generic and industry-focused
+8. Do NOT mention any company names, website names, or specific brands
+
+{f"Good Examples:{chr(10)}{examples_text}" if examples_text else ""}
+
+Return ONLY a JSON array of query strings:
+["query 1", "query 2", ...]"""
+
+            messages = [
+                SystemMessage(content=f"You are an SEO expert generating GENERIC search queries for the {industry} industry. NEVER mention any specific brand, company, or website names. Keep everything generic. Respond with valid JSON array only."),
+                HumanMessage(content=prompt)
+            ]
         
         response = llm.invoke(messages)
         result_text = response.content

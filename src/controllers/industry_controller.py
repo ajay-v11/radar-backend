@@ -82,7 +82,7 @@ async def analyze_company_stream(
                     company_name=company_name or "",
                     company_description="",
                     competitor_urls={},
-                    llm_provider="claude",
+                    llm_provider=settings.INDUSTRY_ANALYSIS_PROVIDER,
                     target_region=target_region,
                     progress_callback=progress_callback
                 )

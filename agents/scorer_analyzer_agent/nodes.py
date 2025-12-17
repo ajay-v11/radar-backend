@@ -95,7 +95,7 @@ def analyze_responses(state: ScorerAnalyzerState) -> ScorerAnalyzerState:
                 "mentioned": analysis["company_mentioned"],
                 "rank": analysis["rank"],
                 "competitors_mentioned": analysis["competitors_found"],
-                "response_preview": response[:200] + "..." if len(response) > 200 else response
+                "response_preview": response
             }
             
             # Update counters

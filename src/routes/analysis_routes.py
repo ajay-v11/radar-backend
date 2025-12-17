@@ -48,7 +48,7 @@ class VisibilityAnalysisRequest(BaseModel):
     company_slug_id: str  # Slug from company analysis
     num_queries: int = 20
     models: List[str] = ["llama", "gemini"]
-    llm_provider: str = "llama"
+    llm_provider: str = "openai"
     
     class Config:
         extra = "forbid"

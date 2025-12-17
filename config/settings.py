@@ -21,11 +21,11 @@ class Settings(BaseSettings):
     # LLM Provider Configuration
     # Choose which provider to use for different tasks
     # Options: "openai", "claude", "gemini", "llama", "grok", "deepseek"
-    INDUSTRY_ANALYSIS_PROVIDER: str = "claude"  # Provider for industry detection & analysis
-    QUERY_GENERATION_PROVIDER: str = "claude"   # Provider for query generation
+    INDUSTRY_ANALYSIS_PROVIDER: str = "openai"  # Provider for industry detection & analysis
+    QUERY_GENERATION_PROVIDER: str = "openai"   # Provider for query generation
     
     # Model Settings - Cost-effective models
-    CHATGPT_MODEL: str = "gpt-3.5-turbo"
+    CHATGPT_MODEL: str = "gpt-4o"
     CLAUDE_MODEL: str = "claude-3-5-haiku-20241022"  # Latest Haiku
     GEMINI_MODEL: str = "gemini-2.5-flash-lite"  # Cost-effective Gemini
     GROQ_LLAMA_MODEL: str = "llama-3.1-8b-instant"  # Llama 3.1 8B via Groq (FREE)

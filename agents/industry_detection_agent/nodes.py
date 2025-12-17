@@ -505,49 +505,87 @@ def generate_query_categories(state: IndustryDetectorState) -> IndustryDetectorS
         return state
     
     try:
-        prompt = f"""Generate search query categories for analyzing this company's AI visibility.
+        # First, create the fixed brand-specific category
+        brand_category = {
+            "brand_specific": {
+                "name": "Brand-Specific Queries",
+                "weight": 0.25,
+                "description": f"Direct searches specifically for {company_name}",
+                "examples": [
+                    f"{company_name} reviews",
+                    f"what is {company_name}",
+                    f"{company_name} alternatives"
+                ],
+                "include_brands": True  # Flag to indicate brand names are allowed
+            }
+        }
+        
+        prompt = f"""Generate search query categories for analyzing AI visibility in this industry.
 
-Company: {company_name}
-Description: {company_description}
 Industry: {industry}
 Industry Description: {industry_description}
-Competitors: {', '.join(competitors[:5])}
 
-Create 5-7 query categories that represent how real users would search for companies in this space.
+Create 4-6 GENERIC query categories that represent how real users would search in this space.
+These categories must be 100% GENERIC - absolutely NO brand names, company names, or website names.
+
 Each category needs:
 - category_key: unique identifier (lowercase, underscores)
 - category_name: human-readable name
-- weight: importance (0.0-1.0, must sum to 1.0 across all categories)
+- weight: importance (0.0-1.0, must sum to 0.75 across all categories - 0.25 is reserved for brand queries)
 - description: what this category represents
-- examples: 2-3 example queries
+- examples: 2-3 example queries (100% GENERIC, NO brand names)
 
-Example for "AI Resume Builder":
+Example format (use industry-appropriate categories):
 {{
     "categories": [
         {{
-            "category_key": "ai_comparison",
-            "category_name": "AI Tool Comparison",
-            "weight": 0.30,
-            "description": "Comparing AI resume tools",
-            "examples": ["Rezi vs Resume.io", "best AI resume builder"]
+            "category_key": "service_comparison",
+            "category_name": "Service Comparison",
+            "weight": 0.20,
+            "description": "Generic comparison searches",
+            "examples": ["best services in this industry", "compare top platforms", "which service is better"]
         }},
         {{
-            "category_key": "ats_optimization",
-            "category_name": "ATS Optimization",
-            "weight": 0.25,
-            "description": "Queries about beating ATS systems",
-            "examples": ["ATS-friendly resume", "how to pass ATS scan"]
+            "category_key": "features_benefits",
+            "category_name": "Features & Benefits",
+            "weight": 0.15,
+            "description": "Feature-focused searches",
+            "examples": ["key features to look for", "benefits of using these services", "what to expect"]
         }},
-        ...
+        {{
+            "category_key": "pricing_value",
+            "category_name": "Pricing & Value",
+            "weight": 0.15,
+            "description": "Cost-related searches",
+            "examples": ["affordable options", "pricing comparison", "best value services"]
+        }},
+        {{
+            "category_key": "reviews_ratings",
+            "category_name": "Reviews & Ratings",
+            "weight": 0.15,
+            "description": "Quality and feedback searches",
+            "examples": ["customer reviews", "highest rated services", "user experiences"]
+        }},
+        {{
+            "category_key": "getting_started",
+            "category_name": "Getting Started",
+            "weight": 0.10,
+            "description": "Beginner-focused searches",
+            "examples": ["how to get started", "beginner guide", "first time tips"]
+        }}
     ]
 }}
 
-Make categories specific to {industry}, not generic. Weights must sum to 1.0."""
+CRITICAL RULES:
+- Examples must be 100% GENERIC - absolutely NO brand, company, or website names
+- Focus on user intent and industry needs
+- Make categories specific to {industry}
+- Weights must sum to 0.75 (0.25 is reserved for brand queries)
+- Use natural search language"""
 
-        # Skip structured output - go straight to JSON for speed
         messages = [
-            SystemMessage(content="You are an SEO and search intent expert. Generate realistic query categories. Respond ONLY with valid JSON."),
-            HumanMessage(content=prompt + "\n\nRespond with JSON only in this exact format: {\"categories\": [{\"category_key\": \"...\", \"category_name\": \"...\", \"weight\": 0.X, \"description\": \"...\", \"examples\": [...]}, ...]}")
+            SystemMessage(content="You are an SEO expert generating GENERIC search query categories. NEVER include brand names, company names, or website names in examples. Only use generic industry terms. Respond ONLY with valid JSON."),
+            HumanMessage(content=prompt + "\n\nRespond with JSON only: {\"categories\": [{\"category_key\": \"...\", \"category_name\": \"...\", \"weight\": 0.X, \"description\": \"...\", \"examples\": [...]}, ...]}")
         ]
         
         response = llm.invoke(messages)
@@ -562,21 +600,24 @@ Make categories specific to {industry}, not generic. Weights must sum to 1.0."""
         result = json.loads(result_text)
         categories_list = result.get("categories", [])
         
-        # Normalize weights to sum to 1.0
+        # Normalize weights to sum to 0.75 (since brand category takes 0.25)
         total_weight = sum(cat.get("weight", 0) for cat in categories_list)
         if total_weight > 0:
             for cat in categories_list:
-                cat["weight"] = cat.get("weight", 0) / total_weight
+                cat["weight"] = (cat.get("weight", 0) / total_weight) * 0.75
         
-        categories_dict = {}
+        # Build categories dict with brand category FIRST
+        categories_dict = brand_category.copy()
+        
         for cat in categories_list:
             key = cat.get("category_key", "")
-            if key:
+            if key and key != "brand_specific":  # Avoid overwriting brand category
                 categories_dict[key] = {
                     "name": cat.get("category_name", ""),
                     "weight": cat.get("weight", 0),
                     "description": cat.get("description", ""),
-                    "examples": cat.get("examples", [])
+                    "examples": cat.get("examples", []),
+                    "include_brands": False  # Flag to indicate NO brand names allowed
                 }
         
         state["query_categories_template"] = categories_dict

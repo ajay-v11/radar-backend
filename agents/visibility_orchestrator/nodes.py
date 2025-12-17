@@ -152,6 +152,10 @@ def select_next_category(state: VisibilityOrchestrationState) -> VisibilityOrche
 def generate_category_queries(state: VisibilityOrchestrationState) -> VisibilityOrchestrationState:
     """
     Node: Generate queries for the current category only.
+    
+    Respects the include_brands flag from the category template:
+    - include_brands=True: Brand-specific queries (company name required in every query)
+    - include_brands=False: Generic queries (NO brand names allowed)
     """
     current_category = state.get("current_category")
     category_distribution = state.get("category_distribution", {})
@@ -166,12 +170,14 @@ def generate_category_queries(state: VisibilityOrchestrationState) -> Visibility
     
     # Find category details from template (handle both formats)
     category_info = None
+    include_brands = False
     
     if "categories" in query_categories_template:
         # Format 1: List of categories
         for cat in query_categories_template["categories"]:
             if cat["category_key"] == current_category:
                 category_info = cat
+                include_brands = cat.get("include_brands", False)
                 break
     else:
         # Format 2: Dict of categories (from Phase 1)
@@ -183,6 +189,7 @@ def generate_category_queries(state: VisibilityOrchestrationState) -> Visibility
                 "description": cat_data.get("description", ""),
                 "examples": cat_data.get("examples", [])
             }
+            include_brands = cat_data.get("include_brands", False)
     
     if not category_info:
         error_msg = f"Category '{current_category}' not found in template"
@@ -198,25 +205,47 @@ def generate_category_queries(state: VisibilityOrchestrationState) -> Visibility
         if not llm:
             raise Exception("Failed to initialize LLM")
         
-        # Build context
-        competitors_str = ", ".join(state.get("competitors", [])[:5])
+        company_name = state.get("company_name", "")
+        industry = state.get("industry", "")
         
-        system_prompt = f"""You are a search query expert. Generate realistic search queries that users would type into AI chatbots.
+        if include_brands:
+            # Brand-specific category - company name MUST be in every query
+            competitors_str = ", ".join(state.get("competitors", [])[:5])
+            
+            system_prompt = f"""You are a search query expert. Generate brand-specific search queries.
 
-Industry: {state.get('industry')}
-Company: {state.get('company_name')}
-Description: {state.get('company_description', '')}
+Company: {company_name}
 Competitors: {competitors_str}
 
+STRICT REQUIREMENT: Every single query MUST include "{company_name}".
+For comparison queries, always put {company_name} first (e.g., "{company_name} vs [competitor]").
+
+Generate {num_queries_for_category} queries like:
+- "{company_name} reviews"
+- "what is {company_name}"
+- "{company_name} alternatives"
+- "is {company_name} worth it"
+- "{company_name} pricing"
+- "{company_name} vs [competitor]" (company name FIRST)"""
+
+            user_prompt = f"Generate exactly {num_queries_for_category} brand-specific queries. Every query must mention {company_name}."
+        else:
+            # Generic category - NO brand names allowed
+            examples_str = ", ".join(category_info.get("examples", [])[:3])
+            
+            system_prompt = f"""You are a search query expert. Generate GENERIC industry search queries.
+
+Industry: {industry}
 Category: {category_info['category_name']}
 Description: {category_info['description']}
-Examples: {', '.join(category_info.get('examples', []))}
+{f"Examples: {examples_str}" if examples_str else ""}
 
-Generate {num_queries_for_category} diverse, natural search queries for this category.
-Mix company name, competitors, and generic industry terms.
-Make queries realistic - how real users would search."""
+STRICT REQUIREMENT: Do NOT mention any brand names, company names, or website names.
+Keep all queries 100% generic and industry-focused.
 
-        user_prompt = f"Generate exactly {num_queries_for_category} search queries for the '{category_info['category_name']}' category."
+Generate {num_queries_for_category} diverse, natural search queries for this category."""
+
+            user_prompt = f"Generate exactly {num_queries_for_category} GENERIC search queries for the '{category_info['category_name']}' category. NO brand names."
         
         messages = [
             SystemMessage(content=system_prompt),
@@ -228,7 +257,7 @@ Make queries realistic - how real users would search."""
         
         state["current_queries"] = queries
         
-        logger.info(f"✓ Generated {len(queries)} queries for '{current_category}'")
+        logger.info(f"✓ Generated {len(queries)} queries for '{current_category}' (brands={'yes' if include_brands else 'no'})")
         
     except Exception as e:
         error_msg = f"Query generation failed for '{current_category}': {str(e)}"

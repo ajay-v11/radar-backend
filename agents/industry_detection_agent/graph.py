@@ -75,7 +75,7 @@ def run_industry_detection_workflow(
     company_name: str = "",
     company_description: str = "",
     competitor_urls: Dict[str, str] = None,
-    llm_provider: str = "claude",
+    llm_provider: str = "openai",
     progress_callback = None
 ):
     """
