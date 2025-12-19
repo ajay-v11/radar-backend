@@ -13,7 +13,7 @@ Prerequisites:
 
 import json
 import logging
-from agents.visibility_orchestrator import run_visibility_orchestration
+from app.services.agents import run_visibility_orchestration
 
 # Configure logging
 logging.basicConfig(
@@ -138,7 +138,7 @@ def test_orchestration_with_fresh_data():
     logger.info("Testing Visibility Orchestration with Fresh Data")
     logger.info("=" * 80)
     
-    from agents.industry_detection_agent import run_industry_detection_workflow
+    from app.services.agents import run_industry_detection_workflow
     
     # Run industry detection first
     logger.info("\n🔍 Running Industry Detection...")

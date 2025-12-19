@@ -2,7 +2,7 @@
 Quick test for the new dynamic industry detection workflow.
 """
 
-from agents.industry_detection_agent import run_industry_detection_workflow
+from app.services.agents import run_industry_detection_workflow
 import json
 
 def test_dynamic_industry_detection():

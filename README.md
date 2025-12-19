@@ -100,7 +100,7 @@ Visibility Score + Detailed Report
 
 #### Industry Detection Agent (9 Nodes)
 
-![Industry Detection Agent Workflow](industry_detection_graph.png)
+![Industry Detection Agent Workflow](screenshots/industry_detection_graph.png)
 
 The Industry Detector uses a 9-node LangGraph workflow that:
 
@@ -111,7 +111,7 @@ The Industry Detector uses a 9-node LangGraph workflow that:
 
 #### Visibility Orchestrator (7 Nodes with Conditional Looping)
 
-![Visibility Orchestrator Workflow](visibility_orchestrator_graph.png)
+![Visibility Orchestrator Workflow](screenshots/visibility_orchestrator_graph.png)
 
 The Visibility Orchestrator uses a 7-node LangGraph workflow with category-based batching:
 

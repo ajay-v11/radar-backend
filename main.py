@@ -1,10 +1,17 @@
 """
-Main entry point - imports from new organized structure.
-
-For backward compatibility, this file imports the app from src/app.py
+Main entry point for the AI Visibility Scoring System API.
 """
 
-from src.app import app
+import uvicorn
+from app.app import app
 
 __all__ = ["app"]
 
+if __name__ == "__main__":
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

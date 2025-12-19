@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 def test_redis():
     """Test Redis connection"""
     try:
-        from config.database import get_redis_client
+        from app.core.config.database import get_redis_client
         
         redis_client = get_redis_client()
         
@@ -34,7 +34,7 @@ def test_redis():
 def test_chromadb():
     """Test ChromaDB connection"""
     try:
-        from config.database import get_chroma_client
+        from app.core.config.database import get_chroma_client
         
         client = get_chroma_client()
         

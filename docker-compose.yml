@@ -39,11 +39,35 @@ services:
       timeout: 5s
       retries: 5
 
+  # Postgres - Database for persistent storage
+  # Use for: user data, company profiles, job status
+  radar-backend-postgres:
+    image: postgres:17-alpine
+    container_name: radar-backend-postgres
+    ports:
+      - '6432:5432'
+    environment:
+      POSTGRES_DB: radar
+      POSTGRES_USER: radar_user
+      POSTGRES_PASSWORD: radar_password
+    volumes:
+      - radar-backend-postgres-data:/var/lib/postgresql/data
+    networks:
+      - radar-backend-network
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U radar_user -d radar']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   radar-backend-chroma-data:
     name: radar-backend-chroma-data
   radar-backend-redis-data:
     name: radar-backend-redis-data
+  radar-backend-postgres-data:
+    name: radar-backend-postgres-data
 
 networks:
   radar-backend-network:

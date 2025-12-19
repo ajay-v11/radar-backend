@@ -6,7 +6,7 @@ This tests the new visibility orchestrator with progressive category processing.
 
 import json
 import logging
-from agents.visibility_orchestrator import run_visibility_orchestration
+from app.services.agents import run_visibility_orchestration
 
 # Configure logging
 logging.basicConfig(

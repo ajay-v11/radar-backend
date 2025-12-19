@@ -5,7 +5,7 @@ Test enhanced scorer analyzer with complete query log, category breakdown, and r
 import sys
 sys.path.insert(0, '/home/ajay/major-project/radar/fastapi-app')
 
-from agents.scorer_analyzer import analyze_score
+from app.services.agents import analyze_score
 
 
 def test_enhanced_scorer():
