@@ -1,17 +1,32 @@
 """
 Analysis Routes
 
-Two-phase analysis workflow:
+Two-phase analysis workflow with job-based system:
 1. Company Analysis (Phase 1) - Scraping, industry detection, competitor identification
 2. Visibility Analysis (Phase 2) - Query generation, model testing, scoring
+
+Both phases support:
+- Job-based async processing with queue management
+- Idempotency (same request returns existing job)
+- Quota enforcement
+- SSE streaming for real-time progress
 """
 import asyncio
+import hashlib
 import logging
 import json
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth import get_current_user, get_optional_user
+from app.core.config.database import get_async_session
+from app.core.rate_limit import check_user_quota, increment_quota
+from app.core.queue import get_job_queue
+from app.models.db import User, Job, JobStatus, JobType
+from app.services import job_service
 
 from app.api.controllers.industry_controller import analyze_company_stream
 from app.api.controllers.analysis_controller import execute_visibility_analysis
@@ -54,16 +69,125 @@ class VisibilityAnalysisRequest(BaseModel):
         extra = "forbid"
 
 
+class JobCreatedResponse(BaseModel):
+    """Response when a job is created."""
+    job_id: int
+    status: str
+    message: str
+    queue_position: Optional[int] = None
+    existing: bool = False
+
+
 # ============================================================================
-# Phase 1: Company Analysis
+# Helper Functions
 # ============================================================================
 
-@router.post("/company")
-async def analyze_company_smart(request: CompanyAnalysisRequest):
+def generate_idempotency_key(user_id: int, company_url: str, job_type: str, extra: str = "") -> str:
+    """Generate idempotency key for job deduplication."""
+    key = f"{user_id}:{company_url}:{job_type}:{extra}"
+    return hashlib.sha256(key.encode()).hexdigest()
+
+
+# ============================================================================
+# Phase 1: Company Analysis (Job-Based)
+# ============================================================================
+
+@router.post("/company", response_model=JobCreatedResponse)
+async def create_company_analysis_job(
+    request: CompanyAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
     """
-    Phase 1: Company Analysis with slug-based caching.
+    Phase 1: Create company analysis job.
     
-    Always streams SSE (even for cache hits) - simpler for frontend.
+    Creates a job for company analysis. If an identical job already exists
+    (same user + URL), returns the existing job (idempotency).
+    
+    Parameters:
+    - company_url: Company website URL (required)
+    - company_name: Optional company name override
+    - target_region: Target region for AI model context (default: "United States")
+    
+    Returns: Job ID and status
+    """
+    # Generate idempotency key
+    idempotency_key = generate_idempotency_key(
+        current_user.id,
+        str(request.company_url),
+        "company"
+    )
+    
+    # Check for existing active job
+    existing_job = await job_service.get_job_by_idempotency_key(db, idempotency_key)
+    if existing_job and existing_job.status in [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING]:
+        # Return existing job
+        job_queue = get_job_queue()
+        queue_position = await job_queue.get_position(existing_job.id) if existing_job.status == JobStatus.QUEUED else None
+        
+        return JobCreatedResponse(
+            job_id=existing_job.id,
+            status=existing_job.status.value,
+            message="Job already exists. Connect to stream for updates.",
+            queue_position=queue_position,
+            existing=True
+        )
+    
+    # Check quota
+    await check_user_quota(db, current_user)
+    
+    # Create new job
+    job = await job_service.create_job(
+        db=db,
+        user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        job_type=JobType.COMPANY_ANALYSIS,
+        params={
+            "company_url": str(request.company_url),
+            "company_name": request.company_name,
+            "target_region": request.target_region
+        },
+        status=JobStatus.QUEUED
+    )
+    
+    # Enqueue job
+    job_queue = get_job_queue()
+    try:
+        queue_position = await job_queue.enqueue(job.id)
+        await job_service.update_job_queue_position(db, job.id, queue_position)
+    except ValueError as e:
+        # Queue full - cancel job
+        await job_service.update_job_status(db, job.id, JobStatus.CANCELLED)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+    
+    # Increment quota
+    await increment_quota(db, current_user.id)
+    
+    logger.info(f"Created company analysis job {job.id} for user {current_user.id}")
+    
+    return JobCreatedResponse(
+        job_id=job.id,
+        status=JobStatus.QUEUED.value,
+        message="Job created successfully. Connect to /jobs/{job_id}/stream for updates.",
+        queue_position=queue_position,
+        existing=False
+    )
+
+
+@router.post("/company/stream")
+async def analyze_company_stream_legacy(
+    request: CompanyAnalysisRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """
+    Phase 1: Company Analysis with direct SSE streaming (legacy).
+    
+    This endpoint provides backward compatibility with the old streaming API.
+    For new integrations, use POST /analyze/company to create a job,
+    then GET /jobs/{job_id}/stream for SSE updates.
     
     Parameters:
     - company_url: Company website URL (required)
@@ -94,7 +218,6 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
                 event = json.loads(event_json)
                 if event.get("step") == "complete" and event.get("status") == "success":
                     final_data = event.get("data", {})
-                    # Add company_url to cached data
                     final_data["company_url"] = str(request.company_url)
                     event["slug_id"] = slug
                     event["cached"] = False
@@ -118,71 +241,210 @@ async def analyze_company_smart(request: CompanyAnalysisRequest):
 
 
 # ============================================================================
-# Phase 2: Visibility Analysis
+# Phase 2: Visibility Analysis (Job-Based)
 # ============================================================================
 
-def build_competitor_summary(analysis_report: dict, top_n: int = 5) -> list:
-    """Build simple competitor summary for dashboard display."""
-    competitor_rankings = analysis_report.get("competitor_rankings", {})
-    overall_rankings = competitor_rankings.get("overall", [])
+@router.post("/visibility", response_model=JobCreatedResponse)
+async def create_visibility_analysis_job(
+    request: VisibilityAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_session)
+):
+    """
+    Phase 2: Create visibility analysis job.
     
-    # Return top N competitors with simplified data
-    summary = []
-    for comp in overall_rankings[:top_n]:
-        summary.append({
-            "name": comp.get("name"),
-            "mention_count": comp.get("total_mentions", 0),
-            "visibility_score": comp.get("percentage", 0)
-        })
+    Creates a job for visibility analysis. If an identical job already exists
+    (same user + slug + params), returns the existing job (idempotency).
     
-    return summary
+    Parameters:
+    - company_slug_id: Slug from company analysis (required)
+    - num_queries: Total queries (20-100, default: 20)
+    - models: AI models to test (default: ["llama", "gemini"])
+    - llm_provider: LLM for query generation (default: "openai")
+    
+    Returns: Job ID and status
+    """
+    # Verify company data exists
+    company_data = get_cached_by_slug(request.company_slug_id)
+    if not company_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Company data not found for slug_id: {request.company_slug_id}. Please run company analysis first."
+        )
+    
+    company_url = company_data.get("company_url", "")
+    
+    # Generate idempotency key (includes params for uniqueness)
+    extra = f"{request.num_queries}:{','.join(sorted(request.models))}:{request.llm_provider}"
+    idempotency_key = generate_idempotency_key(
+        current_user.id,
+        company_url,
+        "visibility",
+        extra
+    )
+    
+    # Check for existing active job
+    existing_job = await job_service.get_job_by_idempotency_key(db, idempotency_key)
+    if existing_job and existing_job.status in [JobStatus.PENDING, JobStatus.QUEUED, JobStatus.RUNNING]:
+        job_queue = get_job_queue()
+        queue_position = await job_queue.get_position(existing_job.id) if existing_job.status == JobStatus.QUEUED else None
+        
+        return JobCreatedResponse(
+            job_id=existing_job.id,
+            status=existing_job.status.value,
+            message="Job already exists. Connect to stream for updates.",
+            queue_position=queue_position,
+            existing=True
+        )
+    
+    # Check quota
+    await check_user_quota(db, current_user)
+    
+    # Create new job
+    job = await job_service.create_job(
+        db=db,
+        user_id=current_user.id,
+        idempotency_key=idempotency_key,
+        job_type=JobType.VISIBILITY_ANALYSIS,
+        params={
+            "company_slug_id": request.company_slug_id,
+            "company_url": company_url,
+            "num_queries": request.num_queries,
+            "models": request.models,
+            "llm_provider": request.llm_provider
+        },
+        status=JobStatus.QUEUED
+    )
+    
+    # Enqueue job
+    job_queue = get_job_queue()
+    try:
+        queue_position = await job_queue.enqueue(job.id)
+        await job_service.update_job_queue_position(db, job.id, queue_position)
+    except ValueError as e:
+        await job_service.update_job_status(db, job.id, JobStatus.CANCELLED)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+    
+    # Increment quota
+    await increment_quota(db, current_user.id)
+    
+    logger.info(f"Created visibility analysis job {job.id} for user {current_user.id}")
+    
+    return JobCreatedResponse(
+        job_id=job.id,
+        status=JobStatus.QUEUED.value,
+        message="Job created successfully. Connect to /jobs/{job_id}/stream for updates.",
+        queue_position=queue_position,
+        existing=False
+    )
 
 
-def clean_query_log(query_log: list) -> list:
-    """Remove response_preview from query log entries."""
-    cleaned = []
-    for entry in query_log:
-        cleaned_entry = {
-            "query": entry.get("query"),
-            "category": entry.get("category"),
-            "results": {}
-        }
-        for model_name, result in entry.get("results", {}).items():
-            cleaned_entry["results"][model_name] = {
-                "mentioned": result.get("mentioned"),
-                "rank": result.get("rank"),
-                "competitors_mentioned": result.get("competitors_mentioned")
+@router.post("/visibility/stream")
+async def analyze_visibility_stream_legacy(
+    request: VisibilityAnalysisRequest,
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """
+    Phase 2: Visibility analysis with direct SSE streaming (legacy).
+    
+    This endpoint provides backward compatibility with the old streaming API.
+    For new integrations, use POST /analyze/visibility to create a job,
+    then GET /jobs/{job_id}/stream for SSE updates.
+    """
+    try:
+        company_data = get_cached_by_slug(request.company_slug_id)
+        
+        if not company_data:
+            raise ValueError(f"Company data not found for slug_id: {request.company_slug_id}")
+        
+        company_url = company_data.get("company_url", "")
+        if not company_url:
+            raise ValueError("Company URL not found in cached data")
+        
+        visibility_slug = generate_visibility_slug(
+            company_url,
+            request.num_queries,
+            request.models,
+            request.llm_provider
+        )
+        
+        cached_result = get_cached_by_slug(visibility_slug)
+        
+        async def _stream():
+            if cached_result:
+                # Stream cached data
+                from app.services.agents.visibility_orchestrator.nodes import get_exact_model_name
+                
+                analysis_report = cached_result.get("analysis_report", {})
+                by_model_raw = analysis_report.get("by_model", {})
+                model_scores = {}
+                
+                for model_key, model_data in by_model_raw.items():
+                    exact_name = get_exact_model_name(model_key)
+                    mentions = model_data.get("mentions", 0)
+                    total = model_data.get("total_responses", 0)
+                    score = (mentions / total * 100) if total > 0 else 0.0
+                    model_scores[exact_name] = round(score, 2)
+                
+                category_breakdown = []
+                for cat in analysis_report.get("category_breakdown", []):
+                    category_breakdown.append({
+                        "category": cat.get("category"),
+                        "score": cat.get("score", 0),
+                        "queries": cat.get("queries", 0),
+                        "mentions": cat.get("mentions", 0)
+                    })
+                
+                final_event = {
+                    "step": "complete",
+                    "status": "success",
+                    "message": "Visibility analysis completed!",
+                    "data": {
+                        "visibility_score": cached_result.get("visibility_score", 0),
+                        "model_scores": model_scores,
+                        "total_queries": cached_result.get("total_queries", 0),
+                        "total_mentions": analysis_report.get("total_mentions", 0),
+                        "categories_processed": len(category_breakdown),
+                        "category_breakdown": category_breakdown,
+                        "slug_id": visibility_slug
+                    },
+                    "cached": True
+                }
+                yield f"data: {json.dumps(final_event)}\n\n"
+            else:
+                # Stream live analysis
+                async for event in visibility_analysis_stream_internal(
+                    request, visibility_slug, request.company_slug_id, company_data
+                ):
+                    yield event
+        
+        return StreamingResponse(
+            _stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
             }
-        cleaned.append(cleaned_entry)
-    return cleaned
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating stream: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-def clean_category_analysis(analysis: dict) -> dict:
-    """Remove sample_mentions and response_preview from category analysis."""
-    cleaned = analysis.copy()
-    # Remove sample_mentions if present
-    cleaned.pop("sample_mentions", None)
-    # Clean query_log if present
-    if "query_log" in cleaned:
-        cleaned["query_log"] = clean_query_log(cleaned["query_log"])
-    return cleaned
-
-
-async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: str, company_slug: str, company_data: dict):
-    """
-    Stream visibility analysis workflow with category-based batching.
-    
-    Simple caching: If slug matches, stream cached data instantly.
-    If not, run full analysis and cache with slug.
-    """
+async def visibility_analysis_stream_internal(request, slug, company_slug, company_data):
+    """Internal streaming function for visibility analysis."""
+    from queue import Queue
+    import concurrent.futures
+    from app.services.agents.visibility_orchestrator.nodes import get_exact_model_name
     
     def emit(step: str, status: str, data: dict = None, message: str = ""):
-        event = {
-            "step": step,
-            "status": status,
-            "message": message,
-            "data": data or {}
-        }
+        event = {"step": step, "status": status, "message": message, "data": data or {}}
         return f"data: {json.dumps(event)}\n\n"
     
     try:
@@ -193,18 +455,11 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
             "target_region": company_data.get("target_region", "United States")
         }, "Using cached company data")
         
-        # Create thread-safe queue for real-time streaming
-        from queue import Queue
         event_queue = Queue()
         result_container = {}
         
         def progress_callback(step, status, message, data):
-            """Thread-safe callback to stream progress in real-time."""
             event_queue.put((step, status, message, data))
-            logger.info(f"Progress: {step} - {message}")
-        
-        # Run visibility analysis in thread
-        import concurrent.futures
         
         def run_analysis():
             try:
@@ -218,24 +473,20 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
                 )
                 result_container['result'] = result
             finally:
-                # Signal completion
                 event_queue.put(None)
         
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = executor.submit(run_analysis)
         
-        # Stream progress updates in real-time as they arrive
         while True:
             try:
                 event = event_queue.get(timeout=0.1)
-                if event is None:  # Analysis completed
+                if event is None:
                     break
                 step, status, message, data = event
                 yield emit(step, status, data, message)
             except:
-                # Queue empty, check if analysis is done
                 if future.done():
-                    # Drain any remaining events
                     while not event_queue.empty():
                         event = event_queue.get_nowait()
                         if event is not None:
@@ -244,70 +495,31 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
                     break
                 await asyncio.sleep(0.05)
         
-        # Get final result
-        future.result(timeout=1)  # Should be instant since it's done
+        future.result(timeout=1)
         final_result = result_container.get('result')
         
-        # Cache the complete results with slug
         cache_by_slug(slug, final_result)
         
-        # Build complete response with all required fields
         analysis_report = final_result.get("analysis_report", {})
-        
-        # Get per-model scores with exact names and full breakdown
-        from app.services.agents.visibility_orchestrator.nodes import get_exact_model_name
         by_model_raw = analysis_report.get("by_model", {})
-        
-        # Build model_scores (simple scores) and by_model (detailed breakdown)
         model_scores = {}
-        by_model = {}
+        
         for model_key, model_data in by_model_raw.items():
             exact_name = get_exact_model_name(model_key)
             mentions = model_data.get("mentions", 0)
             total = model_data.get("total_responses", 0)
-            mention_rate = model_data.get("mention_rate", 0)
             score = (mentions / total * 100) if total > 0 else 0.0
-            
             model_scores[exact_name] = round(score, 2)
-            by_model[exact_name] = {
-                "mentions": mentions,
-                "total_responses": total,
-                "mention_rate": round(mention_rate, 4),
-                "score": round(score, 2)
-            }
         
-        # Build model-category matrix BEFORE cleaning (needs original data)
-        model_category_matrix = {}
-        for cat_data in analysis_report.get("category_breakdown", []):
-            cat_key = cat_data.get("category")
-            cat_analysis = cat_data.get("analysis", {})
-            by_model_cat = cat_analysis.get("by_model", {})
-            
-            for model_key, model_cat_data in by_model_cat.items():
-                exact_name = get_exact_model_name(model_key)
-                if exact_name not in model_category_matrix:
-                    model_category_matrix[exact_name] = {}
-                
-                mentions = model_cat_data.get("mentions", 0)
-                total = model_cat_data.get("total_responses", 0)
-                score = (mentions / total * 100) if total > 0 else 0.0
-                model_category_matrix[exact_name][cat_key] = round(score, 2)
-        
-        # Build category breakdown with full details (cleaned)
         category_breakdown = []
         for cat in analysis_report.get("category_breakdown", []):
             category_breakdown.append({
                 "category": cat.get("category"),
                 "score": cat.get("score", 0),
                 "queries": cat.get("queries", 0),
-                "mentions": cat.get("mentions", 0),
-                "analysis": clean_category_analysis(cat.get("analysis", {}))
+                "mentions": cat.get("mentions", 0)
             })
         
-        # Build competitor summary for dashboard
-        top_competitors = build_competitor_summary(analysis_report, top_n=5)
-        
-        # Send final event with complete data structure
         final_event_data = {
             "visibility_score": final_result.get("visibility_score", 0),
             "model_scores": model_scores,
@@ -315,17 +527,7 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
             "total_mentions": analysis_report.get("total_mentions", 0),
             "categories_processed": len(category_breakdown),
             "category_breakdown": category_breakdown,
-            "model_category_matrix": model_category_matrix,
-            "top_competitors": top_competitors,
-            "slug_id": slug,
-            "analysis_report": {
-                "total_mentions": analysis_report.get("total_mentions", 0),
-                "total_responses": analysis_report.get("total_responses", 0),
-                "mention_rate": analysis_report.get("mention_rate", 0),
-                "by_model": by_model,
-                "by_category": analysis_report.get("by_category", {}),
-                "category_breakdown": category_breakdown
-            }
+            "slug_id": slug
         }
         
         yield emit("complete", "success", final_event_data, "Visibility analysis completed!")
@@ -335,157 +537,8 @@ async def visibility_analysis_stream(request: VisibilityAnalysisRequest, slug: s
         yield emit("error", "failed", {"error": str(e)}, f"Error: {str(e)}")
 
 
-@router.post("/visibility")
-async def analyze_visibility(request: VisibilityAnalysisRequest):
-    """
-    Phase 2: Visibility analysis with slug-based caching.
-    
-    Always streams SSE (even for cache hits) - simpler for frontend.
-    
-    Parameters:
-    - company_slug_id: Slug from company analysis (required)
-    - num_queries: Total queries (20-100, default: 20)
-    - models: AI models to test (default: ["llama", "gemini"])
-    - llm_provider: LLM for query generation (default: "llama")
-    
-    Returns: SSE stream with slug_id in final event
-    """
-    try:
-        # Get company data using slug
-        company_data = get_cached_by_slug(request.company_slug_id)
-        
-        if not company_data:
-            raise ValueError(f"Company data not found for slug_id: {request.company_slug_id}. Please run POST /analyze/company first.")
-        
-        # Generate visibility slug
-        company_url = company_data.get("company_url", "")
-        if not company_url:
-            raise ValueError("Company URL not found in cached data")
-        
-        visibility_slug = generate_visibility_slug(
-            company_url,
-            request.num_queries,
-            request.models,
-            request.llm_provider
-        )
-        
-        # Check cache
-        cached_result = get_cached_by_slug(visibility_slug)
-        
-        async def _stream_cached():
-            if cached_result:
-                # Stream cached data instantly - same format as live analysis
-                from app.services.agents.visibility_orchestrator.nodes import get_exact_model_name
-                
-                analysis_report = cached_result.get("analysis_report", {})
-                
-                # Get per-model scores with exact names and full breakdown
-                by_model_raw = analysis_report.get("by_model", {})
-                model_scores = {}
-                by_model = {}
-                for model_key, model_data in by_model_raw.items():
-                    exact_name = get_exact_model_name(model_key)
-                    mentions = model_data.get("mentions", 0)
-                    total = model_data.get("total_responses", 0)
-                    mention_rate = model_data.get("mention_rate", 0)
-                    score = (mentions / total * 100) if total > 0 else 0.0
-                    
-                    model_scores[exact_name] = round(score, 2)
-                    by_model[exact_name] = {
-                        "mentions": mentions,
-                        "total_responses": total,
-                        "mention_rate": round(mention_rate, 4),
-                        "score": round(score, 2)
-                    }
-                
-                # Build model-category matrix BEFORE cleaning (needs original data)
-                model_category_matrix = {}
-                for cat_data in analysis_report.get("category_breakdown", []):
-                    cat_key = cat_data.get("category")
-                    cat_analysis = cat_data.get("analysis", {})
-                    by_model_cat = cat_analysis.get("by_model", {})
-                    
-                    for model_key, model_cat_data in by_model_cat.items():
-                        exact_name = get_exact_model_name(model_key)
-                        if exact_name not in model_category_matrix:
-                            model_category_matrix[exact_name] = {}
-                        
-                        mentions = model_cat_data.get("mentions", 0)
-                        total = model_cat_data.get("total_responses", 0)
-                        score = (mentions / total * 100) if total > 0 else 0.0
-                        model_category_matrix[exact_name][cat_key] = round(score, 2)
-                
-                # Build category breakdown with full details (cleaned)
-                category_breakdown = []
-                for cat in analysis_report.get("category_breakdown", []):
-                    category_breakdown.append({
-                        "category": cat.get("category"),
-                        "score": cat.get("score", 0),
-                        "queries": cat.get("queries", 0),
-                        "mentions": cat.get("mentions", 0),
-                        "analysis": clean_category_analysis(cat.get("analysis", {}))
-                    })
-                
-                # Build competitor summary for dashboard
-                top_competitors = build_competitor_summary(analysis_report, top_n=5)
-                
-                # Emit identical structure to live analysis
-                final_event = {
-                    "step": "complete",
-                    "status": "success",
-                    "message": "Visibility analysis completed!",
-                    "data": {
-                        "visibility_score": cached_result.get("visibility_score", 0),
-                        "model_scores": model_scores,
-                        "total_queries": cached_result.get("total_queries", 0),
-                        "total_mentions": analysis_report.get("total_mentions", 0),
-                        "categories_processed": len(category_breakdown),
-                        "category_breakdown": category_breakdown,
-                        "model_category_matrix": model_category_matrix,
-                        "top_competitors": top_competitors,
-                        "slug_id": visibility_slug,
-                        # "analysis_report": {
-                        #     "total_mentions": analysis_report.get("total_mentions", 0),
-                        #     "total_responses": analysis_report.get("total_responses", 0),
-                        #     "mention_rate": analysis_report.get("mention_rate", 0),
-                        #     "by_model": by_model,
-                        #     "by_category": analysis_report.get("by_category", {}),
-                        #     "category_breakdown": category_breakdown
-                        # }
-                    },
-                    "cached": True
-                }
-                
-                yield f"data: {json.dumps(final_event)}\n\n"
-            else:
-                # Stream live analysis
-                async for event in visibility_analysis_stream(request, visibility_slug, request.company_slug_id, company_data):
-                    yield event
-        
-        return StreamingResponse(
-            _stream_cached(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid request: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Error creating stream: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {str(e)}"
-        )
-
-
 # ============================================================================
-# Report Endpoints - Detailed Analysis Data
+# Report Endpoints
 # ============================================================================
 
 class QueryLogRequest(BaseModel):
@@ -502,21 +555,7 @@ class QueryLogRequest(BaseModel):
 
 @report_router.get("/{slug_id}")
 async def get_full_report(slug_id: str):
-    """
-    Get complete analysis report by slug_id.
-    
-    Use the slug_id returned from POST /analyze/visibility.
-    
-    Parameters:
-    - slug_id: The slug returned from visibility analysis
-    
-    Example:
-    ```
-    GET /report/visibility_abc123def456
-    ```
-    
-    Returns: Complete analysis with all detailed data
-    """
+    """Get complete analysis report by slug_id."""
     try:
         cached_result = get_cached_by_slug(slug_id)
         
@@ -528,7 +567,6 @@ async def get_full_report(slug_id: str):
         
         analysis_report = cached_result.get("analysis_report", {})
         
-        # Build comprehensive report
         report = {
             "slug_id": slug_id,
             "summary": {
@@ -556,46 +594,18 @@ async def get_full_report(slug_id: str):
         raise
     except Exception as e:
         logger.error(f"Error fetching report: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching report: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @report_router.post("/{slug_id}/query-log")
 async def get_query_log(slug_id: str, request: QueryLogRequest):
-    """
-    Get paginated query log by slug_id.
-    
-    Use the slug_id returned from POST /analyze/visibility.
-    
-    Filtering:
-    - category: Filter by category
-    - model: Filter by model
-    - mentioned: Filter by mentioned status
-    
-    Pagination:
-    - page: Page number (default: 1)
-    - limit: Per page (default: 50, max: 100)
-    
-    Example:
-    ```
-    POST /report/visibility_abc123def456/query-log
-    {
-        "page": 1,
-        "limit": 50,
-        "model": "chatgpt"
-    }
-    ```
-    """
+    """Get paginated query log by slug_id."""
     try:
-        # Validate pagination
         if request.limit > 100:
             raise ValueError("Limit cannot exceed 100")
         if request.page < 1:
             raise ValueError("Page must be >= 1")
         
-        # Get cached analysis by slug
         cached_result = get_cached_by_slug(slug_id)
         
         if not cached_result:
@@ -605,9 +615,6 @@ async def get_query_log(slug_id: str, request: QueryLogRequest):
             )
         
         analysis_report = cached_result.get("analysis_report", {})
-        
-        # Query log is nested in category_breakdown -> analysis -> query_log
-        # We need to aggregate from all categories
         query_log = []
         category_breakdown = analysis_report.get("category_breakdown", [])
         
@@ -616,92 +623,47 @@ async def get_query_log(slug_id: str, request: QueryLogRequest):
             category_queries = category_analysis.get("query_log", [])
             query_log.extend(category_queries)
         
-        logger.info(f"Query log has {len(query_log)} total queries from {len(category_breakdown)} categories")
-        
-        # Apply filters
         filtered_queries = query_log
         
         if request.category:
             filtered_queries = [q for q in filtered_queries if q.get("category") == request.category]
-            logger.info(f"After category filter '{request.category}': {len(filtered_queries)} queries")
         
         if request.model:
-            filtered_queries = [
-                q for q in filtered_queries 
-                if request.model in q.get("results", {})
-            ]
-            logger.info(f"After model filter '{request.model}': {len(filtered_queries)} queries")
+            filtered_queries = [q for q in filtered_queries if request.model in q.get("results", {})]
         
         if request.mentioned is not None:
             filtered_queries = [
                 q for q in filtered_queries
-                if any(
-                    result.get("mentioned") == request.mentioned
-                    for result in q.get("results", {}).values()
-                )
+                if any(result.get("mentioned") == request.mentioned for result in q.get("results", {}).values())
             ]
-            logger.info(f"After mentioned filter '{request.mentioned}': {len(filtered_queries)} queries")
         
-        # Pagination
         total = len(filtered_queries)
         total_pages = (total + request.limit - 1) // request.limit
         start_idx = (request.page - 1) * request.limit
         end_idx = start_idx + request.limit
-        
-        paginated_queries = filtered_queries[start_idx:end_idx]
         
         return {
             "total": total,
             "page": request.page,
             "limit": request.limit,
             "total_pages": total_pages,
-            "queries": paginated_queries,
-            "filters": {
-                "category": request.category,
-                "model": request.model,
-                "mentioned": request.mentioned
-            }
+            "queries": filtered_queries[start_idx:end_idx],
+            "filters": {"category": request.category, "model": request.model, "mentioned": request.mentioned}
         }
         
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error fetching query log: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error fetching query log: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @report_router.get("/{slug_id}/export/csv")
 async def export_csv_report(slug_id: str):
-    """
-    Export complete visibility analysis as CSV file.
-    
-    Use the slug_id returned from POST /analyze/visibility.
-    
-    The CSV includes:
-    - Summary (company, industry, overall score)
-    - Model performance breakdown
-    - Category breakdown
-    - Competitor rankings
-    - Complete query log (all queries tested)
-    - Model-category performance matrix
-    
-    Example:
-    ```
-    GET /report/visibility_abc123def456/export/csv
-    ```
-    
-    Returns: CSV file download
-    """
+    """Export complete visibility analysis as CSV file."""
     try:
-        # Get cached analysis by slug
         cached_result = get_cached_by_slug(slug_id)
         
         if not cached_result:
@@ -710,32 +672,20 @@ async def export_csv_report(slug_id: str):
                 detail=f"No analysis found for slug_id: {slug_id}"
             )
         
-        # Generate CSV report
         csv_content = generate_csv_report(cached_result)
-        
-        # Get company name for filename
         company_name = cached_result.get("company_name", "company")
-        # Sanitize filename
         safe_company_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in company_name)
         filename = f"{safe_company_name}_visibility_report.csv"
         
-        logger.info(f"Generated CSV report for {company_name} ({len(csv_content)} bytes)")
-        
         from fastapi.responses import Response
-        
         return Response(
             content=csv_content,
             media_type="text/csv",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
-            }
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
         )
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error generating CSV report: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating CSV report: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))

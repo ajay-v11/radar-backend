@@ -60,6 +60,7 @@ async def analyze_company_stream(
         # Create thread-safe queue for real-time streaming
         event_queue = Queue()
         result_container = {}
+        error_container = {}
         
         def progress_callback(step, status, message, data):
             """Callback to capture progress events and put them in queue (thread-safe)."""
@@ -85,6 +86,9 @@ async def analyze_company_stream(
                     progress_callback=progress_callback
                 )
                 result_container['result'] = result
+            except Exception as e:
+                logger.error(f"Error in industry detection workflow: {str(e)}", exc_info=True)
+                error_container['error'] = e
             finally:
                 # Signal completion
                 event_queue.put(None)
@@ -114,7 +118,44 @@ async def analyze_company_stream(
         
         # Wait for workflow to complete
         await workflow_task
+        
+        # Check if there was an error
+        if 'error' in error_container:
+            error = error_container['error']
+            error_message = "Analysis failed. Please try again."
+            
+            # Provide more specific error messages
+            error_str = str(error).lower()
+            if "api" in error_str or "rate limit" in error_str:
+                error_message = "AI service temporarily unavailable. Please try again in a few moments."
+            elif "timeout" in error_str:
+                error_message = "Request timed out. Please try again with a different URL."
+            elif "scraping" in error_str or "firecrawl" in error_str:
+                error_message = "Unable to access website. Please check the URL and try again."
+            elif "connection" in error_str:
+                error_message = "Connection error. Please check your network and try again."
+            
+            logger.error(f"Company analysis failed for {company_url}: {error_message}")
+            
+            yield json.dumps({
+                "step": "error",
+                "status": "failed",
+                "message": error_message,
+                "data": None
+            })
+            return
+        
         result = result_container.get('result')
+        
+        if not result:
+            logger.error(f"No result returned from workflow for {company_url}")
+            yield json.dumps({
+                "step": "error",
+                "status": "failed",
+                "message": "Analysis failed. No data returned. Please try again.",
+                "data": None
+            })
+            return
         
         logger.info(f"✅ Analysis complete for {company_url}")
         
@@ -147,10 +188,11 @@ async def analyze_company_stream(
         })
         
     except Exception as e:
+        logger.error(f"Unexpected error in analyze_company_stream: {str(e)}", exc_info=True)
         yield json.dumps({
             "step": "error",
             "status": "failed",
-            "message": f"Unexpected error: {str(e)}",
+            "message": "Analysis failed. Please try again.",
             "data": None
         })
 

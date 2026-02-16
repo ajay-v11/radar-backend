@@ -120,53 +120,92 @@ def execute_visibility_analysis(
     
     Returns:
         Complete analysis results with visibility score and detailed report
+    
+    Raises:
+        ValueError: If required fields are missing from company_data
+        Exception: For other errors during analysis (with user-friendly messages)
     """
     logger.info(f"Starting visibility analysis for {company_data.get('company_name')}")
     
-    # Validate required fields from Phase 1
-    required_fields = ["company_name", "industry", "competitors", "query_categories_template"]
-    missing_fields = [f for f in required_fields if f not in company_data]
-    if missing_fields:
-        raise ValueError(f"Missing required fields from Phase 1: {', '.join(missing_fields)}")
-    
-    # Prepare company data for orchestrator
-    orchestrator_input = {
-        "company_url": company_url,
-        "company_name": company_data["company_name"],
-        "company_description": company_data.get("company_description", ""),
-        "company_summary": company_data.get("company_summary", company_data.get("company_description", "")),
-        "industry": company_data["industry"],
-        "target_region": company_data.get("target_region", "United States"),  # Default to US if not provided
-        "competitors": company_data["competitors"],
-        "query_categories_template": company_data["query_categories_template"]
-    }
-    
-    # Run the new LangGraph orchestrator with progress callback
-    result = run_visibility_orchestration(
-        company_data=orchestrator_input,
-        num_queries=num_queries,
-        models=models,
-        llm_provider=llm_provider,
-        progress_callback=progress_callback
-    )
-    
-    # Format result to match expected structure
-    analysis_report = result.get("analysis_report", {})
-    
-    final_result = {
-        "industry": company_data["industry"],
-        "company_name": company_data["company_name"],
-        "competitors": company_data["competitors"],
-        "total_queries": len(result.get("queries", [])),
-        "total_responses": sum(len(r) for r in result.get("model_responses", {}).values()),
-        "visibility_score": result.get("visibility_score", 0),
-        "analysis_report": analysis_report,
-        "queries": result.get("queries", []),
-        "query_categories": result.get("query_categories", {}),
-        "model_responses": result.get("model_responses", {}),
-        "errors": result.get("errors", [])
-    }
-    
-    logger.info(f"✅ Visibility analysis complete: {final_result['visibility_score']:.1f}% visibility")
-    
-    return final_result
+    try:
+        # Validate required fields from Phase 1
+        required_fields = ["company_name", "industry", "competitors", "query_categories_template"]
+        missing_fields = [f for f in required_fields if f not in company_data]
+        if missing_fields:
+            raise ValueError(f"Missing required fields from Phase 1: {', '.join(missing_fields)}")
+        
+        # Prepare company data for orchestrator
+        orchestrator_input = {
+            "company_url": company_url,
+            "company_name": company_data["company_name"],
+            "company_description": company_data.get("company_description", ""),
+            "company_summary": company_data.get("company_summary", company_data.get("company_description", "")),
+            "industry": company_data["industry"],
+            "target_region": company_data.get("target_region", "United States"),  # Default to US if not provided
+            "competitors": company_data["competitors"],
+            "query_categories_template": company_data["query_categories_template"]
+        }
+        
+        # Run the new LangGraph orchestrator with progress callback
+        try:
+            result = run_visibility_orchestration(
+                company_data=orchestrator_input,
+                num_queries=num_queries,
+                models=models,
+                llm_provider=llm_provider,
+                progress_callback=progress_callback
+            )
+        except Exception as e:
+            logger.error(f"Error in visibility orchestration: {str(e)}", exc_info=True)
+            
+            # Provide user-friendly error messages based on error type
+            error_str = str(e).lower()
+            if "api" in error_str or "rate limit" in error_str:
+                raise Exception("AI service temporarily unavailable. Please try again in a few moments.")
+            elif "timeout" in error_str:
+                raise Exception("Request timed out. Please try with fewer queries or different models.")
+            elif "connection" in error_str:
+                raise Exception("Connection error. Please check your network and try again.")
+            elif "quota" in error_str or "credit" in error_str:
+                raise Exception("API quota exceeded. Please check your API keys or try again later.")
+            else:
+                raise Exception("Visibility analysis failed. Please try again.")
+        
+        # Validate result
+        if not result:
+            logger.error("No result returned from visibility orchestration")
+            raise Exception("Analysis failed. No data returned. Please try again.")
+        
+        # Format result to match expected structure
+        analysis_report = result.get("analysis_report", {})
+        
+        final_result = {
+            "industry": company_data["industry"],
+            "company_name": company_data["company_name"],
+            "competitors": company_data["competitors"],
+            "total_queries": len(result.get("queries", [])),
+            "total_responses": sum(len(r) for r in result.get("model_responses", {}).values()),
+            "visibility_score": result.get("visibility_score", 0),
+            "analysis_report": analysis_report,
+            "queries": result.get("queries", []),
+            "query_categories": result.get("query_categories", {}),
+            "model_responses": result.get("model_responses", {}),
+            "errors": result.get("errors", [])
+        }
+        
+        logger.info(f"✅ Visibility analysis complete: {final_result['visibility_score']:.1f}% visibility")
+        
+        return final_result
+        
+    except ValueError:
+        # Re-raise validation errors as-is
+        raise
+    except Exception as e:
+        # Log the full error but raise with user-friendly message
+        logger.error(f"Visibility analysis failed for {company_data.get('company_name')}: {str(e)}", exc_info=True)
+        # If it's already a user-friendly message, re-raise it
+        if any(phrase in str(e) for phrase in ["temporarily unavailable", "timed out", "Connection error", "quota exceeded"]):
+            raise
+        # Otherwise, provide generic message
+        raise Exception("Visibility analysis failed. Please try again.")
+

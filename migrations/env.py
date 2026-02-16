@@ -9,7 +9,7 @@ from alembic import context
 # access to the values within the .ini file in use.
 from sqlmodel import SQLModel
 from app.core.config.settings import settings
-from app.models.db import Company, Competitor # Import your models here
+from app.models.db import User, Job, JobEvent, RateLimit  # Import production models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

@@ -5,6 +5,9 @@ from typing import Optional
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
+    # Authentication (Required)
+    NEXTAUTH_SECRET: str  # Required for JWT validation - no default
+    
     # API Keys
     OPENAI_API_KEY: Optional[str] = ""
     ANTHROPIC_API_KEY: Optional[str] = ""
